@@ -2176,27 +2176,64 @@ namespace gamescope
 		};
 
 		// Sort the modes to our preference.
-		std::stable_sort( m_pConnector->modes, m_pConnector->modes + m_pConnector->count_modes, []( const drmModeModeInfo &a, const drmModeModeInfo &b )
+	// External displays prefer modes below a conservative pixel-clock ceiling.
+	// Modes above the ceiling remain available, but rank below modes beneath it.
+	// Environment overrides:
+	//   GAMESCOPE_EXTERNAL_MAX_PIXEL_CLOCK_MHZ (default 580, 0 = unlimited)
+	//   GAMESCOPE_EXTERNAL_PREFERRED_REFRESH   (default -1 = automatic)
+	const bool bExternalConnector =
+		m_pConnector->connector_type == DRM_MODE_CONNECTOR_HDMIA ||
+		m_pConnector->connector_type == DRM_MODE_CONNECTOR_HDMIB ||
+		m_pConnector->connector_type == DRM_MODE_CONNECTOR_DisplayPort;
+
+	int nExternalMaxPixelClockMHz = 580;
+	int nExternalPreferredRefresh = -1;
+
+	if ( const char *pszValue = getenv( "GAMESCOPE_EXTERNAL_MAX_PIXEL_CLOCK_MHZ" ) )
+		nExternalMaxPixelClockMHz = atoi( pszValue );
+
+	if ( const char *pszValue = getenv( "GAMESCOPE_EXTERNAL_PREFERRED_REFRESH" ) )
+		nExternalPreferredRefresh = atoi( pszValue );
+
+	std::stable_sort( m_pConnector->modes, m_pConnector->modes + m_pConnector->count_modes, [=]( const drmModeModeInfo &a, const drmModeModeInfo &b )
+	{
+		if ( bExternalConnector && nExternalMaxPixelClockMHz > 0 )
 		{
-			bool bGoodRefreshA = a.vrefresh >= 60;
-			bool bGoodRefreshB = b.vrefresh >= 60;
-			if (bGoodRefreshA != bGoodRefreshB)
-				return bGoodRefreshA;
+			const bool bWithinClockA = a.clock <= nExternalMaxPixelClockMHz * 1000;
+			const bool bWithinClockB = b.clock <= nExternalMaxPixelClockMHz * 1000;
 
-			bool bPreferredA = a.type & DRM_MODE_TYPE_PREFERRED;
-			bool bPreferredB = b.type & DRM_MODE_TYPE_PREFERRED;
-			if (bPreferredA != bPreferredB)
-				return bPreferredA;
+			if ( bWithinClockA != bWithinClockB )
+				return bWithinClockA;
+		}
 
-			int nAreaA = a.hdisplay * a.vdisplay;
-			int nAreaB = b.hdisplay * b.vdisplay;
-			if (nAreaA != nAreaB)
-				return nAreaA > nAreaB;
+		if ( bExternalConnector && nExternalPreferredRefresh >= 0 )
+		{
+			const bool bPreferredRefreshA = a.vrefresh == nExternalPreferredRefresh;
+			const bool bPreferredRefreshB = b.vrefresh == nExternalPreferredRefresh;
 
-			return a.vrefresh > b.vrefresh;
-		} );
+			if ( bPreferredRefreshA != bPreferredRefreshB )
+				return bPreferredRefreshA;
+		}
 
-		std::vector<uint8_t> oldEdid = std::move( m_Mutable.EdidData );
+		const bool bGoodRefreshA = a.vrefresh >= 60;
+		const bool bGoodRefreshB = b.vrefresh >= 60;
+		if ( bGoodRefreshA != bGoodRefreshB )
+			return bGoodRefreshA;
+
+		const bool bPreferredA = a.type & DRM_MODE_TYPE_PREFERRED;
+		const bool bPreferredB = b.type & DRM_MODE_TYPE_PREFERRED;
+		if ( bPreferredA != bPreferredB )
+			return bPreferredA;
+
+		const int nAreaA = a.hdisplay * a.vdisplay;
+		const int nAreaB = b.hdisplay * b.vdisplay;
+		if ( nAreaA != nAreaB )
+			return nAreaA > nAreaB;
+
+		return a.vrefresh > b.vrefresh;
+	} );
+
+	std::vector<uint8_t> oldEdid = std::move( m_Mutable.EdidData );
 		m_Mutable.EdidData.clear();
 
 		// Clear this information out.
@@ -3110,7 +3147,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->pConnector->GetProperties().CRTC_ID->SetPendingValue( drm->req, drm->pCRTC->GetObjectId(), bForceInRequest );
 
 			if ( drm->pConnector->GetProperties().Colorspace )
-				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, uColorimetry, bForceInRequest );
+				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
 
 		if ( drm->pCRTC && !bSleep )
@@ -3137,7 +3174,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	if ( drm->pConnector && !bSleep )
 	{
 		if ( drm->pConnector->GetProperties().HDR_OUTPUT_METADATA )
-			drm->pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( drm->req, pHDRMetadata ? pHDRMetadata->GetBlobValue() : 0lu, bForceInRequest );
+			drm->pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( drm->req, 0, bForceInRequest );
 
 		if ( drm->pConnector->GetProperties().content_type )
 			drm->pConnector->GetProperties().content_type->SetPendingValue( drm->req, DRM_MODE_CONTENT_TYPE_GAME, bForceInRequest );
