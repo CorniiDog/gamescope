@@ -84,6 +84,7 @@ podman run \
             xcb-util-wm-devel \
             xcb-util-keysyms-devel \
             xorg-x11-server-Xwayland \
+            xorg-x11-server-Xwayland-devel \
             edid-decode \
             google-benchmark-devel
 
