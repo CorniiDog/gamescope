@@ -1,6 +1,10 @@
 ## Fork of gamescope
 
-This is a gamescope fork that fixes many issues NVIDIA-side. This applies to the NVIDIA 575-open drivers, packed within the SteamOS 3.8.16 image
+This is a gamescope fork that fixes many issues NVIDIA-side. 
+
+This is tested on:
+- SteamOS 3.8.16
+- NVIDIA 575-Open drivers
 
 ## NVIDIA / SteamOS Compatibility Changes
 
