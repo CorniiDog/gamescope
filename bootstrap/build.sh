@@ -58,6 +58,11 @@ podman run \
             lcms2-devel \
             libavif-devel \
             vulkan-loader-devel \
+            vulkan-headers \
+            libliftoff-devel \
+            libdecor-devel \
+            libdisplay-info-devel \
+            libeis-devel \
             SDL2-devel \
             hwdata-devel \
             luajit-devel \
@@ -68,6 +73,7 @@ podman run \
             libXdamage-devel \
             libXext-devel \
             libXfixes-devel \
+            libXi-devel \
             libXmu-devel \
             libXrender-devel \
             libXres-devel \
@@ -78,7 +84,8 @@ podman run \
             xcb-util-wm-devel \
             xcb-util-keysyms-devel \
             xorg-x11-server-Xwayland \
-            benchmark-devel
+            edid-decode \
+            google-benchmark-devel
 
         if [[ -d "'"${GS_BUILD_DIR_NAME}"'/meson-private" ]]; then
             meson setup \
