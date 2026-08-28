@@ -101,8 +101,24 @@ namespace gamescope
 	class CDRMConnector;
 }
 
+enum class NvidiaHDRCompatibility
+{
+	Unknown,
+	StandardWorks,
+	TestingPrivate,
+	NeedsPrivate,
+};
+
 struct drm_t {
 	bool bUseLiftoff;
+
+	NvidiaHDRCompatibility eNvidiaHDRCompatibility = NvidiaHDRCompatibility::Unknown;
+	uint32_t uNvidiaHDRConnectorId = 0;
+
+	// NVIDIA's private HDR state is sticky across ordinary flips.
+	// Track HDR transitions so we can force a full KMS state update.
+	bool bNvidiaHDRStateInitialized = false;
+	bool bLastNvidiaHDRWanted = false;
 
 	int fd = -1;
 
@@ -319,6 +335,8 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> rotation;
 			std::optional<CDRMAtomicProperty> COLOR_ENCODING;
 			std::optional<CDRMAtomicProperty> COLOR_RANGE;
+			std::optional<CDRMAtomicProperty> NV_INPUT_COLORSPACE;
+			std::optional<CDRMAtomicProperty> NV_PLANE_DEGAMMA_TF;
 			std::optional<CDRMAtomicProperty> AMD_PLANE_DEGAMMA_TF;
 			std::optional<CDRMAtomicProperty> AMD_PLANE_DEGAMMA_LUT;
 			std::optional<CDRMAtomicProperty> AMD_PLANE_CTM;
@@ -358,6 +376,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> CTM;
 			std::optional<CDRMAtomicProperty> VRR_ENABLED;
 			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
+			std::optional<CDRMAtomicProperty> NV_CRTC_REGAMMA_TF;
 			std::optional<CDRMAtomicProperty> AMD_CRTC_REGAMMA_TF;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
@@ -1526,6 +1545,9 @@ void finish_drm(struct drm_t *drm)
 		if ( pCRTC->GetProperties().OUT_FENCE_PTR )
 			pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( req, 0, true );
 
+		if ( pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+			pCRTC->GetProperties().NV_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
+
 		if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 			pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
 	}
@@ -1552,6 +1574,12 @@ void finish_drm(struct drm_t *drm)
 
 		//if ( pPlane->GetProperties().zpos )
 		//	pPlane->GetProperties().zpos->SetPendingValue( req, , true );
+
+		if ( pPlane->GetProperties().NV_INPUT_COLORSPACE )
+			pPlane->GetProperties().NV_INPUT_COLORSPACE->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().NV_PLANE_DEGAMMA_TF )
+			pPlane->GetProperties().NV_PLANE_DEGAMMA_TF->SetPendingValue( req, 0, true );
 
 		if ( pPlane->GetProperties().AMD_PLANE_DEGAMMA_TF )
 			pPlane->GetProperties().AMD_PLANE_DEGAMMA_TF->SetPendingValue( req, AMDGPU_TRANSFER_FUNCTION_DEFAULT, true );
@@ -2112,6 +2140,8 @@ namespace gamescope
 			m_Props.rotation                 = CDRMAtomicProperty::Instantiate( "rotation",                 this, *rawProperties );
 			m_Props.COLOR_ENCODING           = CDRMAtomicProperty::Instantiate( "COLOR_ENCODING",           this, *rawProperties );
 			m_Props.COLOR_RANGE              = CDRMAtomicProperty::Instantiate( "COLOR_RANGE",              this, *rawProperties );
+			m_Props.NV_INPUT_COLORSPACE      = CDRMAtomicProperty::Instantiate( "NV_INPUT_COLORSPACE",      this, *rawProperties );
+			m_Props.NV_PLANE_DEGAMMA_TF      = CDRMAtomicProperty::Instantiate( "NV_PLANE_DEGAMMA_TF",      this, *rawProperties );
 			m_Props.AMD_PLANE_DEGAMMA_TF     = CDRMAtomicProperty::Instantiate( "AMD_PLANE_DEGAMMA_TF",     this, *rawProperties );
 			m_Props.AMD_PLANE_DEGAMMA_LUT    = CDRMAtomicProperty::Instantiate( "AMD_PLANE_DEGAMMA_LUT",    this, *rawProperties );
 			m_Props.AMD_PLANE_CTM            = CDRMAtomicProperty::Instantiate( "AMD_PLANE_CTM",            this, *rawProperties );
@@ -2147,6 +2177,7 @@ namespace gamescope
 			m_Props.CTM                 = CDRMAtomicProperty::Instantiate( "CTM",                 this, *rawProperties );
 			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
 			m_Props.OUT_FENCE_PTR       = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",       this, *rawProperties );
+			m_Props.NV_CRTC_REGAMMA_TF  = CDRMAtomicProperty::Instantiate( "NV_CRTC_REGAMMA_TF",  this, *rawProperties );
 			m_Props.AMD_CRTC_REGAMMA_TF = CDRMAtomicProperty::Instantiate( "AMD_CRTC_REGAMMA_TF", this, *rawProperties );
 		}
 	}
@@ -2812,6 +2843,56 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				}
 			}
 
+			const bool bUseNvidiaPrivateHDR =
+				(drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::TestingPrivate ||
+				 drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::NeedsPrivate) &&
+				g_bOutputHDREnabled &&
+				frameInfo->outputEncodingEOTF == EOTF_PQ;
+
+			if ( drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::TestingPrivate ||
+				 drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::NeedsPrivate )
+			{
+				if ( bUseNvidiaPrivateHDR )
+				{
+					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", 2u );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "NV_INPUT_COLORSPACE", 2u );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "NV_PLANE_DEGAMMA_TF", 2u );
+				}
+				else
+				{
+					// Explicitly restore the normal SDR state.
+					//
+					// For YCbCr, preserve Gamescope's normal calculated
+					// encoding. For the RGB primary/composition plane,
+					// restore the driver's normal BT.709/default state.
+					if ( entry.layerState[i].ycbcr &&
+						 !cv_drm_debug_disable_color_encoding )
+					{
+						liftoff_layer_set_property(
+							drm->lo_layers[ i ],
+							"COLOR_ENCODING",
+							entry.layerState[i].colorEncoding );
+					}
+					else
+					{
+						liftoff_layer_set_property(
+							drm->lo_layers[ i ],
+							"COLOR_ENCODING",
+							1u );
+					}
+
+					liftoff_layer_set_property(
+						drm->lo_layers[ i ],
+						"NV_INPUT_COLORSPACE",
+						0u );
+
+					liftoff_layer_set_property(
+						drm->lo_layers[ i ],
+						"NV_PLANE_DEGAMMA_TF",
+						0u );
+				}
+			}
+
 			if ( drm_supports_color_mgmt( drm ) )
 			{
 				if (!cv_drm_debug_disable_blend_tf && !bSinglePlane)
@@ -2833,6 +2914,13 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "pixel blend mode" );
+
+			if ( drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::TestingPrivate ||
+				 drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::NeedsPrivate )
+			{
+				liftoff_layer_set_property( drm->lo_layers[ i ], "NV_INPUT_COLORSPACE", 0u );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "NV_PLANE_DEGAMMA_TF", 0u );
+			}
 
 			if ( drm_supports_color_mgmt( drm ) )
 			{
@@ -3006,7 +3094,58 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	drm_colorspace uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 
+	if ( drm->pConnector )
+	{
+		const uint32_t uConnectorId = drm->pConnector->GetObjectId();
+		if ( drm->uNvidiaHDRConnectorId != uConnectorId )
+		{
+			drm->uNvidiaHDRConnectorId = uConnectorId;
+			drm->eNvidiaHDRCompatibility = NvidiaHDRCompatibility::Unknown;
+			drm->bNvidiaHDRStateInitialized = false;
+			drm->bLastNvidiaHDRWanted = false;
+		}
+	}
+
 	const bool bWantsHDR10 = g_bOutputHDREnabled && frameInfo->outputEncodingEOTF == EOTF_PQ;
+
+	const bool bNvidiaPrivateHDRAvailable =
+		drm->pCRTC &&
+		drm->pPrimaryPlane &&
+		drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF.has_value() &&
+		drm->pPrimaryPlane->GetProperties().COLOR_ENCODING.has_value() &&
+		drm->pPrimaryPlane->GetProperties().NV_INPUT_COLORSPACE.has_value() &&
+		drm->pPrimaryPlane->GetProperties().NV_PLANE_DEGAMMA_TF.has_value();
+
+	const bool bUseNvidiaPrivateHDR =
+		bWantsHDR10 &&
+		bNvidiaPrivateHDRAvailable &&
+		(drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::TestingPrivate ||
+		 drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::NeedsPrivate);
+
+	if ( bNvidiaPrivateHDRAvailable &&
+		 drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::NeedsPrivate )
+	{
+		if ( !drm->bNvidiaHDRStateInitialized )
+		{
+			drm->bNvidiaHDRStateInitialized = true;
+			drm->bLastNvidiaHDRWanted = bWantsHDR10;
+		}
+		else if ( drm->bLastNvidiaHDRWanted != bWantsHDR10 )
+		{
+			drm_log.infof(
+				"NVIDIA HDR compatibility: private HDR transition %s -> %s; forcing modeset",
+				drm->bLastNvidiaHDRWanted ? "HDR" : "SDR",
+				bWantsHDR10 ? "HDR" : "SDR" );
+
+			drm->bLastNvidiaHDRWanted = bWantsHDR10;
+
+			// NVIDIA's private PQ/BT.2020 properties can remain latched
+			// across ordinary flips. Rebuild the complete KMS state.
+			drm->needs_modeset = true;
+			g_LiftoffStateCache.clear();
+		}
+	}
+
 	gamescope::BackendBlob *pHDRMetadata = nullptr;
 	if ( drm->pConnector && drm->pConnector->SupportsHDR10() )
 	{
@@ -3020,8 +3159,13 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			uColorimetry = DRM_MODE_COLORIMETRY_BT2020_RGB;
 
-			pHDRMetadata = nullptr; // patch
-			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT; // patch
+			// Start with Valve's standard HDR connector state. Only neutralize
+			// it after that state is rejected and the private fallback is used.
+			if ( bUseNvidiaPrivateHDR )
+			{
+				pHDRMetadata = nullptr;
+				uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
+			}
 		}
 		else
 		{
@@ -3141,6 +3285,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			if ( pCRTC->GetProperties().OUT_FENCE_PTR )
 				pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( drm->req, 0, bForceInRequest );
 
+			if ( pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+				pCRTC->GetProperties().NV_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
+
 			if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 				pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
@@ -3194,6 +3341,16 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	if ( drm->pCRTC && !bSleep )
 	{
+		if ( (drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::TestingPrivate ||
+			  drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::NeedsPrivate) &&
+			 drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+		{
+			drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF->SetPendingValue(
+				drm->req,
+				bUseNvidiaPrivateHDR ? 2u : 0u,
+				bForceInRequest );
+		}
+
 		if ( drm->pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 		{
 			if ( !cv_drm_debug_disable_regamma_tf )
@@ -3212,6 +3369,59 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		ret = drm_prepare_liftoff( drm, frameInfo, needs_modeset );
 	} else {
 		ret = 0;
+	}
+
+	const bool bCanProbeNvidiaHDR =
+		bWantsHDR10 &&
+		bNvidiaPrivateHDRAvailable;
+
+	if ( bCanProbeNvidiaHDR &&
+		 drm->eNvidiaHDRCompatibility == NvidiaHDRCompatibility::Unknown )
+	{
+		if ( ret == 0 )
+		{
+			drm->eNvidiaHDRCompatibility = NvidiaHDRCompatibility::StandardWorks;
+			drm_log.infof(
+				"NVIDIA HDR compatibility: Valve standard HDR state accepted; using standard path" );
+		}
+		else
+		{
+			drm_log.infof(
+				"NVIDIA HDR compatibility: Valve standard HDR state rejected (%s); testing private PQ fallback",
+				strerror( -ret ) );
+
+			// drm_prepare_liftoff only validated/prepared this request; nothing
+			// has been committed to the display yet.
+			drm_rollback( drm );
+
+			drmModeAtomicFree( drm->req );
+			drm->req = nullptr;
+			drm->m_FbIdsInRequest.clear();
+
+			if ( needs_modeset )
+				drm->needs_modeset = true;
+
+			g_LiftoffStateCache.clear();
+			drm->eNvidiaHDRCompatibility = NvidiaHDRCompatibility::TestingPrivate;
+
+			const int nPrivateRet = drm_prepare( drm, async, frameInfo );
+			if ( nPrivateRet == 0 )
+			{
+				drm->eNvidiaHDRCompatibility = NvidiaHDRCompatibility::NeedsPrivate;
+				drm->bNvidiaHDRStateInitialized = true;
+				drm->bLastNvidiaHDRWanted = true;
+
+				drm_log.infof(
+					"NVIDIA HDR compatibility: private PQ fallback accepted; using fallback for this connector" );
+				return 0;
+			}
+
+			drm->eNvidiaHDRCompatibility = NvidiaHDRCompatibility::Unknown;
+			drm_log.errorf(
+				"NVIDIA HDR compatibility: private PQ fallback also rejected (%s)",
+				strerror( -nPrivateRet ) );
+			return nPrivateRet;
+		}
 	}
 
 	if ( ret != 0 ) {
