@@ -9,7 +9,7 @@ This is tested on:
 I did create a one-liner that compiles and sets everything up.
 
 ```bash
-cd ~ && bash <(curl -fsSL https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/oneliner.txt)
+cd ~ && bash <(curl -fsSL "https://github.com/CorniiDog/gamescope-nvidia/raw/refs/heads/master/bootstrap/oneliner.txt?x=$(date +%s)")
 ```
 
 ## NVIDIA / SteamOS Compatibility Changes
