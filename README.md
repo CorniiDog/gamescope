@@ -6,6 +6,12 @@ This is tested on:
 - SteamOS 3.8.16
 - NVIDIA 575-Open drivers (this came pre-installed w/ SteamOS 3.8.16, nothing on your end you need to do)
 
+I did create a one-liner that compiles and sets everything up.
+
+```bash
+cd ~ && bash <(curl -fsSL https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/oneliner.txt)
+```
+
 ## NVIDIA / SteamOS Compatibility Changes
 
 - Added safer external-display mode selection with a configurable pixel-clock ceiling.
