@@ -1,3 +1,20 @@
+## Fork of gamescope
+
+This is a gamescope fork that fixes many issues NVIDIA-side. This applies to the NVIDIA 575-open drivers, packed within the SteamOS 3.8.16 image
+
+## NVIDIA / SteamOS Compatibility Changes
+
+- Added safer external-display mode selection with a configurable pixel-clock ceiling.
+- Added NVIDIA HDMI/DP hotplug recovery using dynamic DDC/EDID probing.
+- Added NVIDIA HDR compatibility fallback using NVIDIA-private KMS properties when the standard HDR path is rejected.
+- Fixed HDR → SDR transitions by explicitly restoring NVIDIA color-processing state.
+- Fixed NVIDIA runtime resolution changes by fully tearing down the active KMS display pipeline before applying a new mode.
+- Runtime mode switching now works reliably between tested 1080p, 1440p, and 4K modes.
+- Workarounds are NVIDIA-specific where possible to avoid changing AMD/Intel behavior.
+- Reduced compatibility-workaround logging after validation.
+
+---
+
 ## gamescope: the micro-compositor formerly known as steamcompmgr
 
 In an embedded session usecase, gamescope does the same thing as steamcompmgr, but with less extra copies and latency:
