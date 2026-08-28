@@ -319,6 +319,10 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> rotation;
 			std::optional<CDRMAtomicProperty> COLOR_ENCODING;
 			std::optional<CDRMAtomicProperty> COLOR_RANGE;
+
+			// NVIDIA HDR color pipeline.
+			std::optional<CDRMAtomicProperty> NV_INPUT_COLORSPACE;
+			std::optional<CDRMAtomicProperty> NV_PLANE_DEGAMMA_TF;
 			std::optional<CDRMAtomicProperty> AMD_PLANE_DEGAMMA_TF;
 			std::optional<CDRMAtomicProperty> AMD_PLANE_DEGAMMA_LUT;
 			std::optional<CDRMAtomicProperty> AMD_PLANE_CTM;
@@ -358,6 +362,9 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> CTM;
 			std::optional<CDRMAtomicProperty> VRR_ENABLED;
 			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
+
+			// NVIDIA HDR output transfer function.
+			std::optional<CDRMAtomicProperty> NV_CRTC_REGAMMA_TF;
 			std::optional<CDRMAtomicProperty> AMD_CRTC_REGAMMA_TF;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
@@ -1525,6 +1532,10 @@ void finish_drm(struct drm_t *drm)
 
 		if ( pCRTC->GetProperties().OUT_FENCE_PTR )
 			pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( req, 0, true );
+		if ( pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+			pCRTC->GetProperties().NV_CRTC_REGAMMA_TF->SetPendingValue(
+				req, 0, true );
+
 
 		if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 			pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
@@ -1552,6 +1563,14 @@ void finish_drm(struct drm_t *drm)
 
 		//if ( pPlane->GetProperties().zpos )
 		//	pPlane->GetProperties().zpos->SetPendingValue( req, , true );
+		if ( pPlane->GetProperties().NV_INPUT_COLORSPACE )
+			pPlane->GetProperties().NV_INPUT_COLORSPACE->SetPendingValue(
+				req, 0, true );
+
+		if ( pPlane->GetProperties().NV_PLANE_DEGAMMA_TF )
+			pPlane->GetProperties().NV_PLANE_DEGAMMA_TF->SetPendingValue(
+				req, 0, true );
+
 
 		if ( pPlane->GetProperties().AMD_PLANE_DEGAMMA_TF )
 			pPlane->GetProperties().AMD_PLANE_DEGAMMA_TF->SetPendingValue( req, AMDGPU_TRANSFER_FUNCTION_DEFAULT, true );
@@ -2112,6 +2131,14 @@ namespace gamescope
 			m_Props.rotation                 = CDRMAtomicProperty::Instantiate( "rotation",                 this, *rawProperties );
 			m_Props.COLOR_ENCODING           = CDRMAtomicProperty::Instantiate( "COLOR_ENCODING",           this, *rawProperties );
 			m_Props.COLOR_RANGE              = CDRMAtomicProperty::Instantiate( "COLOR_RANGE",              this, *rawProperties );
+
+			m_Props.NV_INPUT_COLORSPACE =
+				CDRMAtomicProperty::Instantiate(
+					"NV_INPUT_COLORSPACE", this, *rawProperties );
+
+			m_Props.NV_PLANE_DEGAMMA_TF =
+				CDRMAtomicProperty::Instantiate(
+					"NV_PLANE_DEGAMMA_TF", this, *rawProperties );
 			m_Props.AMD_PLANE_DEGAMMA_TF     = CDRMAtomicProperty::Instantiate( "AMD_PLANE_DEGAMMA_TF",     this, *rawProperties );
 			m_Props.AMD_PLANE_DEGAMMA_LUT    = CDRMAtomicProperty::Instantiate( "AMD_PLANE_DEGAMMA_LUT",    this, *rawProperties );
 			m_Props.AMD_PLANE_CTM            = CDRMAtomicProperty::Instantiate( "AMD_PLANE_CTM",            this, *rawProperties );
@@ -2147,6 +2174,10 @@ namespace gamescope
 			m_Props.CTM                 = CDRMAtomicProperty::Instantiate( "CTM",                 this, *rawProperties );
 			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
 			m_Props.OUT_FENCE_PTR       = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",       this, *rawProperties );
+
+			m_Props.NV_CRTC_REGAMMA_TF =
+				CDRMAtomicProperty::Instantiate(
+					"NV_CRTC_REGAMMA_TF", this, *rawProperties );
 			m_Props.AMD_CRTC_REGAMMA_TF = CDRMAtomicProperty::Instantiate( "AMD_CRTC_REGAMMA_TF", this, *rawProperties );
 		}
 	}
@@ -2757,6 +2788,14 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				else
 				{
 					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+
+			liftoff_layer_unset_property(
+				drm->lo_layers[ i ],
+				"NV_INPUT_COLORSPACE" );
+
+			liftoff_layer_unset_property(
+				drm->lo_layers[ i ],
+				"NV_PLANE_DEGAMMA_TF" );
 				}
 
 				if ( drm_supports_color_mgmt( drm ) )
@@ -2811,6 +2850,51 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
 				}
 			}
+
+		// NVIDIA private HDR plane pipeline.
+		const bool bNvidiaHDR =
+			g_bOutputHDREnabled &&
+			frameInfo->outputEncodingEOTF == EOTF_PQ &&
+			drm->pCRTC &&
+			drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF.has_value();
+
+		if ( drm->pCRTC &&
+			 drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF.has_value() )
+		{
+			if ( bNvidiaHDR )
+			{
+				// NVIDIA values:
+				//   COLOR_ENCODING      2 = BT.2020
+				//   NV_INPUT_COLORSPACE 2 = BT.2100 PQ
+				//   NV_PLANE_DEGAMMA_TF 2 = PQ
+				liftoff_layer_set_property(
+					drm->lo_layers[ i ],
+					"COLOR_ENCODING",
+					2u );
+
+				liftoff_layer_set_property(
+					drm->lo_layers[ i ],
+					"NV_INPUT_COLORSPACE",
+					2u );
+
+				liftoff_layer_set_property(
+					drm->lo_layers[ i ],
+					"NV_PLANE_DEGAMMA_TF",
+					2u );
+			}
+			else
+			{
+				liftoff_layer_set_property(
+					drm->lo_layers[ i ],
+					"NV_INPUT_COLORSPACE",
+					0u );
+
+				liftoff_layer_set_property(
+					drm->lo_layers[ i ],
+					"NV_PLANE_DEGAMMA_TF",
+					0u );
+			}
+		}
 
 			if ( drm_supports_color_mgmt( drm ) )
 			{
@@ -3020,12 +3104,16 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			uColorimetry = DRM_MODE_COLORIMETRY_BT2020_RGB;
 
-			pHDRMetadata = nullptr; // patch
-			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT; // patch
+
+			// NVIDIA KMS workaround:
+			// Standard connector HDR properties are rejected on this path.
+			// Keep the connector neutral and use the NVIDIA private
+			// plane/CRTC PQ pipeline below.
+			pHDRMetadata = nullptr;
+			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 		}
 		else
 		{
-			//pHDRMetadata = drm->sdr_static_metadata.get();
 			pHDRMetadata = nullptr; // patch
 			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 		}
@@ -3140,6 +3228,10 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			if ( pCRTC->GetProperties().OUT_FENCE_PTR )
 				pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( drm->req, 0, bForceInRequest );
+			if ( pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+				pCRTC->GetProperties().NV_CRTC_REGAMMA_TF->SetPendingValue(
+					drm->req, 0, bForceInRequest );
+
 
 			if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 				pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
@@ -3194,6 +3286,20 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	if ( drm->pCRTC && !bSleep )
 	{
+
+		if ( drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+		{
+			const uint64_t uNvidiaRegammaTF =
+				bWantsHDR10 ? 2u : 0u;
+
+			drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF
+				->SetPendingValue(
+					drm->req,
+					uNvidiaRegammaTF,
+					bForceInRequest );
+
+		}
+
 		if ( drm->pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 		{
 			if ( !cv_drm_debug_disable_regamma_tf )
