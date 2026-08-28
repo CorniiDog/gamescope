@@ -180,6 +180,7 @@ struct drm_t {
 };
 
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
+static bool drm_nvidia_runtime_resolution_teardown( struct drm_t *drm );
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 
 
@@ -3619,6 +3620,57 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	if (!drm->pConnector || !drm->pConnector->GetModeConnector())
 		return false;
 
+	bool bOutputCurrentlyActive =
+		drm->pCRTC &&
+		drm->pCRTC->GetProperties().ACTIVE->GetCurrentValue() != 0 &&
+		drm->pConnector->GetProperties().CRTC_ID->GetCurrentValue() != 0;
+
+	bool bModeActuallyChanging = false;
+	drmModeModeInfo currentKernelMode = {};
+
+	if ( bOutputCurrentlyActive )
+	{
+		drmModeCrtc *pKernelCRTC =
+			drmModeGetCrtc( drm->fd, drm->pCRTC->GetObjectId() );
+
+		if ( pKernelCRTC )
+		{
+			if ( pKernelCRTC->mode_valid )
+			{
+				currentKernelMode = pKernelCRTC->mode;
+
+				bModeActuallyChanging =
+					currentKernelMode.clock       != mode->clock       ||
+					currentKernelMode.hdisplay    != mode->hdisplay    ||
+					currentKernelMode.hsync_start != mode->hsync_start ||
+					currentKernelMode.hsync_end   != mode->hsync_end   ||
+					currentKernelMode.htotal      != mode->htotal      ||
+					currentKernelMode.vdisplay    != mode->vdisplay    ||
+					currentKernelMode.vsync_start != mode->vsync_start ||
+					currentKernelMode.vsync_end   != mode->vsync_end   ||
+					currentKernelMode.vtotal      != mode->vtotal      ||
+					currentKernelMode.flags       != mode->flags;
+			}
+
+			drmModeFreeCrtc( pKernelCRTC );
+		}
+	}
+
+	if ( bOutputCurrentlyActive && bModeActuallyChanging )
+	{
+		drm_log.infof(
+			"NVIDIA runtime modeset workaround: kernel mode change detected %dx%d@%uHz -> %dx%d@%uHz",
+			currentKernelMode.hdisplay,
+			currentKernelMode.vdisplay,
+			currentKernelMode.vrefresh,
+			mode->hdisplay,
+			mode->vdisplay,
+			mode->vrefresh );
+
+		if ( !drm_nvidia_runtime_resolution_teardown( drm ) )
+			return false;
+	}
+
 	drm_log.infof("selecting mode %dx%d@%uHz", mode->hdisplay, mode->vdisplay, mode->vrefresh);
 
 	drm->pending.mode_id = GetBackend()->CreateBackendBlob( *mode );
@@ -3727,6 +3779,161 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 		return false;
 
 	g_nDynamicRefreshHz = refresh;
+
+	return true;
+}
+
+static bool drm_nvidia_runtime_resolution_teardown( struct drm_t *drm )
+{
+	if ( !drm->pConnector || !drm->pCRTC || !drm->pPrimaryPlane )
+		return true;
+
+	// Keep this workaround NVIDIA-specific. These are NVIDIA-private
+	// KMS properties and therefore provide a narrow runtime check without
+	// changing AMD/Intel behavior.
+	const bool bNvidia =
+		drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF.has_value() ||
+		drm->pPrimaryPlane->GetProperties().NV_INPUT_COLORSPACE.has_value();
+
+	if ( !bNvidia )
+		return true;
+
+	drm_log.infof(
+		"NVIDIA runtime modeset workaround: tearing down active display before resolution change" );
+
+	// Ordinary Gamescope modesets disable and re-enable the display in the
+	// SAME atomic request. NVIDIA 575 can wedge while performing that live
+	// active->active transition. Commit a real inactive state first.
+	drmModeAtomicReq *req = drmModeAtomicAlloc();
+	if ( !req )
+	{
+		drm_log.errorf(
+			"NVIDIA runtime modeset workaround: failed to allocate teardown request" );
+		return false;
+	}
+
+	const uint32_t uCRTCId = drm->pCRTC->GetObjectId();
+
+	// Detach every plane currently attached to our active CRTC.
+	for ( std::unique_ptr<gamescope::CDRMPlane> &pPlane : drm->planes )
+	{
+		if ( pPlane->GetProperties().CRTC_ID->GetCurrentValue() != uCRTCId )
+			continue;
+
+		pPlane->GetProperties().FB_ID->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().IN_FENCE_FD )
+			pPlane->GetProperties().IN_FENCE_FD->SetPendingValue( req, -1, true );
+
+		if ( pPlane->GetProperties().NV_INPUT_COLORSPACE )
+			pPlane->GetProperties().NV_INPUT_COLORSPACE->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().NV_PLANE_DEGAMMA_TF )
+			pPlane->GetProperties().NV_PLANE_DEGAMMA_TF->SetPendingValue( req, 0, true );
+	}
+
+	// Detach the connector from the CRTC.
+	drm->pConnector->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
+
+	if ( drm->pConnector->GetProperties().Colorspace )
+		drm->pConnector->GetProperties().Colorspace->SetPendingValue( req, 0, true );
+
+	if ( drm->pConnector->GetProperties().HDR_OUTPUT_METADATA )
+		drm->pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( req, 0, true );
+
+	if ( drm->pConnector->GetProperties().content_type )
+		drm->pConnector->GetProperties().content_type->SetPendingValue( req, 0, true );
+
+	if ( drm->pConnector->GetProperties().Broadcast_RGB )
+		drm->pConnector->GetProperties().Broadcast_RGB->SetPendingValue(
+			req, GAMESCOPE_BROADCAST_RGB_MODE_AUTOMATIC, true );
+
+	// Actually stop the scanout engine.
+	drm->pCRTC->GetProperties().ACTIVE->SetPendingValue( req, 0, true );
+	drm->pCRTC->GetProperties().MODE_ID->SetPendingValue( req, 0, true );
+
+	if ( drm->pCRTC->GetProperties().VRR_ENABLED )
+		drm->pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( req, 0, true );
+
+	if ( drm->pCRTC->GetProperties().OUT_FENCE_PTR )
+		drm->pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( req, 0, true );
+
+	if ( drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF )
+		drm->pCRTC->GetProperties().NV_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
+
+	// Intentionally blocking and with no page-flip event. This mirrors the
+	// teardown semantics already used by finish_drm().
+	const int ret =
+		drmModeAtomicCommit(
+			drm->fd,
+			req,
+			DRM_MODE_ATOMIC_ALLOW_MODESET,
+			nullptr );
+
+	drmModeAtomicFree( req );
+
+	if ( ret != 0 )
+	{
+		drm_log.errorf(
+			"NVIDIA runtime modeset workaround: teardown commit failed: %s",
+			strerror( errno ) );
+
+		drm_rollback( drm );
+		return false;
+	}
+
+	// Keep Gamescope's cached atomic-property state synchronized with what
+	// was actually committed to KMS.
+	for ( std::unique_ptr<gamescope::CDRMCRTC> &pCRTC : drm->crtcs )
+	{
+		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty :
+			  pCRTC->GetProperties() )
+		{
+			if ( oProperty )
+				oProperty->OnCommit();
+		}
+	}
+
+	for ( std::unique_ptr<gamescope::CDRMPlane> &pPlane : drm->planes )
+	{
+		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty :
+			  pPlane->GetProperties() )
+		{
+			if ( oProperty )
+				oProperty->OnCommit();
+		}
+	}
+
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+
+		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty :
+			  pConnector->GetProperties() )
+		{
+			if ( oProperty )
+				oProperty->OnCommit();
+		}
+	}
+
+	// Nothing should remain visible after the teardown commit.
+	{
+		std::scoped_lock lock{
+			drm->m_QueuedFbIdsMutex,
+			drm->m_mutVisibleFbIds };
+
+		drm->m_QueuedFbIds.clear();
+		drm->m_VisibleFbIds.clear();
+	}
+
+	drm->m_FbIdsInRequest.clear();
+
+	// Force liftoff to rebuild the plane assignment from the clean state.
+	g_LiftoffStateCache.clear();
+
+	drm_log.infof(
+		"NVIDIA runtime modeset workaround: display teardown committed successfully" );
 
 	return true;
 }
