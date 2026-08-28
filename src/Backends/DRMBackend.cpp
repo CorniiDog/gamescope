@@ -3017,7 +3017,11 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			wlserver_vk_swapchain_feedback* pFeedback = steamcompmgr_get_base_layer_swapchain_feedback();
 			if ( pFeedback && pFeedback->hdr_metadata_blob != nullptr )
 				pHDRMetadata = pFeedback->hdr_metadata_blob.get();
+
 			uColorimetry = DRM_MODE_COLORIMETRY_BT2020_RGB;
+
+			pHDRMetadata = nullptr; // patch
+			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT; // patch
 		}
 		else
 		{
