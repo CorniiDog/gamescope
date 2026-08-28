@@ -11,6 +11,7 @@
 #include <xf86drm.h>
 #include <sys/eventfd.h>
 
+#include <limits.h>
 #include <linux/input-event-codes.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
@@ -90,29 +91,83 @@
 #include <string>
 
 
-// GAMESCOPE_NVIDIA_DDC_HOTPLUG_PATCH
+// GAMESCOPE_NVIDIA_DDC_HOTPLUG_PATCH_V2
 //
-// Experimental NVIDIA hotplug workaround.
+// NVIDIA can leave DRM connector state stale after HDMI/DP hotplug.
+// Performing a real EDID transaction on the NVIDIA DDC bus wakes the
+// connector path sufficiently for the normal Gamescope DirtyState()
+// reprobe to obtain the correct state.
 //
-// NVIDIA 575 can leave DRM connector state stale after HDMI changes.
-// An actual DDC/EDID transaction appears to wake/refresh the display
-// path. On each NVIDIA KMS change event, directly probe EDID address
-// 0x50 on the HDMI DDC bus, then allow Gamescope's normal DirtyState()
-// connector handling to proceed.
+// This implementation does NOT depend on a fixed /dev/i2c-N number.
 //
-// This is entirely non-root. SteamOS grants deck access to /dev/i2c-6.
+// Strategy:
+//
+//  1. Look for DRM connector -> DDC -> i2c-N relationships in sysfs.
+//  2. Probe those NVIDIA-owned buses first.
+//  3. If sysfs cannot expose a usable mapping, probe every NVIDIA I2C
+//     adapter as a safe fallback.
+//
+// This allows multiple monitors and survives I2C bus renumbering.
 
 static bool gamescope_nvidia_drm_loaded()
 {
 	return access( "/sys/module/nvidia_drm", F_OK ) == 0;
 }
 
-static bool gamescope_nvidia_probe_hdmi_ddc()
+static bool gamescope_read_file_string(
+	const std::string &path,
+	std::string &result )
 {
-	static constexpr const char *device = "/dev/i2c-6";
+	FILE *f = fopen( path.c_str(), "r" );
+	if ( !f )
+		return false;
+
+	char buffer[512]{};
+
+	if ( !fgets( buffer, sizeof( buffer ), f ) )
+	{
+		fclose( f );
+		return false;
+	}
+
+	fclose( f );
+
+	result = buffer;
+
+	while ( !result.empty() &&
+	        ( result.back() == '\n' ||
+	          result.back() == '\r' ) )
+	{
+		result.pop_back();
+	}
+
+	return true;
+}
+
+static bool gamescope_nvidia_i2c_adapter(
+	const std::string &i2cName )
+{
+	std::string name;
+
+	if ( !gamescope_read_file_string(
+			"/sys/class/i2c-dev/" + i2cName + "/name",
+			name ) )
+	{
+		return false;
+	}
+
+	return name.find( "NVIDIA" ) != std::string::npos ||
+	       name.find( "nvidia" ) != std::string::npos;
+}
+
+static bool gamescope_nvidia_probe_i2c_edid(
+	const std::string &device )
+{
 	static constexpr uint16_t edidAddress = 0x50;
 
-	const int fd = open( device, O_RDWR | O_CLOEXEC );
+	const int fd =
+		open( device.c_str(), O_RDWR | O_CLOEXEC );
+
 	if ( fd < 0 )
 		return false;
 
@@ -143,8 +198,6 @@ static bool gamescope_nvidia_probe_hdmi_ddc()
 	if ( !success )
 		return false;
 
-	// Standard EDID header:
-	// 00 ff ff ff ff ff ff 00
 	static constexpr uint8_t expectedHeader[8] =
 	{
 		0x00, 0xff, 0xff, 0xff,
@@ -155,6 +208,168 @@ static bool gamescope_nvidia_probe_hdmi_ddc()
 		edidHeader,
 		expectedHeader,
 		sizeof( expectedHeader ) ) == 0;
+}
+
+static bool gamescope_extract_i2c_name(
+	const std::string &path,
+	std::string &i2cName )
+{
+	// Search every path component for "i2c-N".
+	size_t pos = 0;
+
+	while ( ( pos = path.find( "i2c-", pos ) ) != std::string::npos )
+	{
+		size_t end = pos + 4;
+
+		while ( end < path.size() &&
+		        path[end] >= '0' &&
+		        path[end] <= '9' )
+		{
+			end++;
+		}
+
+		if ( end > pos + 4 )
+		{
+			i2cName = path.substr( pos, end - pos );
+			return true;
+		}
+
+		pos += 4;
+	}
+
+	return false;
+}
+
+static bool gamescope_probe_connector_ddc(
+	const std::string &connectorPath,
+	unsigned int &probed,
+	unsigned int &detected )
+{
+	const std::string ddcPath =
+		connectorPath + "/ddc";
+
+	char resolved[PATH_MAX]{};
+
+	if ( !realpath( ddcPath.c_str(), resolved ) )
+		return false;
+
+	std::string i2cName;
+
+	if ( !gamescope_extract_i2c_name(
+			resolved,
+			i2cName ) )
+	{
+		return false;
+	}
+
+	if ( !gamescope_nvidia_i2c_adapter( i2cName ) )
+		return false;
+
+	const std::string device =
+		"/dev/" + i2cName;
+
+	const bool present =
+		gamescope_nvidia_probe_i2c_edid( device );
+
+	probed++;
+
+	if ( present )
+		detected++;
+
+	return true;
+}
+
+static std::pair<unsigned int, unsigned int> gamescope_nvidia_probe_display_ddc()
+{
+	unsigned int probed = 0;
+	unsigned int detected = 0;
+
+	// --------------------------------------------------------
+	// Preferred path:
+	// derive connector -> DDC/I2C relationship from sysfs.
+	// --------------------------------------------------------
+
+	glob_t connectors{};
+
+	if ( glob(
+			"/sys/class/drm/card*-*",
+			0,
+			nullptr,
+			&connectors ) == 0 )
+	{
+		for ( size_t i = 0;
+		      i < connectors.gl_pathc;
+		      i++ )
+		{
+			gamescope_probe_connector_ddc(
+				connectors.gl_pathv[i],
+				probed,
+				detected );
+		}
+
+		globfree( &connectors );
+	}
+
+	// --------------------------------------------------------
+	// Fallback:
+	//
+	// Some NVIDIA driver states do not expose the DRM -> DDC
+	// relationship correctly. If we could not derive any buses,
+	// knock on every NVIDIA I2C adapter.
+	//
+	// We intentionally do NOT touch non-NVIDIA I2C adapters.
+	// --------------------------------------------------------
+
+	if ( probed == 0 )
+	{
+		glob_t adapters{};
+
+		if ( glob(
+				"/sys/class/i2c-dev/i2c-*",
+				0,
+				nullptr,
+				&adapters ) == 0 )
+		{
+			for ( size_t i = 0;
+			      i < adapters.gl_pathc;
+			      i++ )
+			{
+				const std::string sysPath =
+					adapters.gl_pathv[i];
+
+				const size_t slash =
+					sysPath.find_last_of( '/' );
+
+				if ( slash == std::string::npos )
+					continue;
+
+				const std::string i2cName =
+					sysPath.substr( slash + 1 );
+
+				if ( !gamescope_nvidia_i2c_adapter(
+						i2cName ) )
+				{
+					continue;
+				}
+
+				const std::string device =
+					"/dev/" + i2cName;
+
+				const bool present =
+					gamescope_nvidia_probe_i2c_edid(
+						device );
+
+				probed++;
+
+				if ( present )
+					detected++;
+			}
+
+			globfree( &adapters );
+		}
+	}
+
+	return { probed, detected };
 }
 
 
@@ -1837,20 +2052,22 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
 {
 	if ( gamescope_nvidia_drm_loaded() )
 	{
-		const bool ddcPresent =
-			gamescope_nvidia_probe_hdmi_ddc();
+		// Wake/refresh NVIDIA's physical DDC paths before asking the
+		// DRM backend to reevaluate connector state.
+		const auto [probed, detected] =
+			gamescope_nvidia_probe_display_ddc();
 
 		wl_log.infof(
-			"NVIDIA HDMI DDC probe: %s",
-			ddcPresent ? "EDID detected" : "no EDID response" );
+			"NVIDIA DDC refresh: probed %u bus%s, "
+			"EDID detected on %u",
+			probed,
+			probed == 1 ? "" : "es",
+			detected );
 
-		// The DDC transaction itself may wake/refresh NVIDIA's stale
-		// connector state. After probing, use Gamescope's normal DRM
-		// connector refresh path.
 		GetBackend()->DirtyState();
 
 		wl_log.infof(
-			"NVIDIA KMS change event: DDC probe complete; "
+			"NVIDIA KMS change event: DDC refresh complete; "
 			"requesting normal connector refresh" );
 
 		nudge_steamcompmgr();
