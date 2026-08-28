@@ -12,6 +12,9 @@
 #include <sys/eventfd.h>
 
 #include <linux/input-event-codes.h>
+#include <sys/ioctl.h>
+#include <linux/i2c-dev.h>
+#include <linux/i2c.h>
 
 #include <X11/extensions/XTest.h>
 #include <xkbcommon/xkbcommon.h>
@@ -87,218 +90,71 @@
 #include <string>
 
 
-// GAMESCOPE_NVIDIA_HOTPLUG_RESTART_PATCH_V5
+// GAMESCOPE_NVIDIA_DDC_HOTPLUG_PATCH
 //
-// NVIDIA can emit repeated DRM HOTPLUG events while connector state is
-// stale. Do not feed those events into the normal live DirtyState()
-// connector reprobe path.
+// Experimental NVIDIA hotplug workaround.
 //
-// Fast path:
-//   Observable HDMI connector-state change -> immediate restart.
+// NVIDIA 575 can leave DRM connector state stale after HDMI changes.
+// An actual DDC/EDID transaction appears to wake/refresh the display
+// path. On each NVIDIA KMS change event, directly probe EDID address
+// 0x50 on the HDMI DDC bus, then allow Gamescope's normal DirtyState()
+// connector handling to proceed.
 //
-// Startup settling:
-//   For the first 20 seconds of a new Gamescope process, connector-state
-//   changes only refresh the baseline. This handles NVIDIA correcting stale
-//   state after the previous Gamescope restart.
-//
-// Fallback:
-//   If connector state remains stale, two KMS events 7.5-15 seconds apart
-//   trigger a restart.
-//
-// No filesystem cooldown marker is used.
+// This is entirely non-root. SteamOS grants deck access to /dev/i2c-6.
 
 static bool gamescope_nvidia_drm_loaded()
 {
 	return access( "/sys/module/nvidia_drm", F_OK ) == 0;
 }
 
-static std::string gamescope_get_nvidia_connector_snapshot()
+static bool gamescope_nvidia_probe_hdmi_ddc()
 {
-	glob_t globResult{};
-	std::string result;
+	static constexpr const char *device = "/dev/i2c-6";
+	static constexpr uint16_t edidAddress = 0x50;
 
-	if ( glob( "/sys/class/drm/card*-HDMI-A-*", 0, nullptr, &globResult ) != 0 )
-		return result;
-
-	for ( size_t i = 0; i < globResult.gl_pathc; i++ )
-	{
-		const std::string base = globResult.gl_pathv[i];
-
-		auto readText = []( const std::string &path ) -> std::string
-		{
-			FILE *f = fopen( path.c_str(), "r" );
-			if ( !f )
-				return {};
-
-			char buffer[256]{};
-			std::string value;
-
-			if ( fgets( buffer, sizeof( buffer ), f ) )
-			{
-				value = buffer;
-
-				while ( !value.empty() &&
-				        ( value.back() == '\n' ||
-				          value.back() == '\r' ) )
-				{
-					value.pop_back();
-				}
-			}
-
-			fclose( f );
-			return value;
-		};
-
-		const std::string status =
-			readText( base + "/status" );
-
-		const std::string enabled =
-			readText( base + "/enabled" );
-
-		// stat().st_size is not useful for many sysfs attributes.
-		// Actually read the EDID so we know whether NVIDIA exposes one.
-		size_t edidBytes = 0;
-
-		if ( FILE *edid = fopen( ( base + "/edid" ).c_str(), "rb" ) )
-		{
-			char buffer[512];
-
-			while ( true )
-			{
-				const size_t n =
-					fread( buffer, 1, sizeof( buffer ), edid );
-
-				edidBytes += n;
-
-				if ( n < sizeof( buffer ) )
-					break;
-			}
-
-			fclose( edid );
-		}
-
-		size_t modeCount = 0;
-
-		if ( FILE *modes = fopen( ( base + "/modes" ).c_str(), "r" ) )
-		{
-			char buffer[256];
-
-			while ( fgets( buffer, sizeof( buffer ), modes ) )
-				modeCount++;
-
-			fclose( modes );
-		}
-
-		result += base;
-		result += "{status=";
-		result += status;
-		result += ",enabled=";
-		result += enabled;
-		result += ",edid=";
-		result += std::to_string( edidBytes );
-		result += ",modes=";
-		result += std::to_string( modeCount );
-		result += "};";
-	}
-
-	globfree( &globResult );
-	return result;
-}
-
-static std::string g_gamescope_nvidia_connector_snapshot =
-	gamescope_get_nvidia_connector_snapshot();
-
-static const auto g_gamescope_nvidia_start_time =
-	std::chrono::steady_clock::now();
-
-static bool gamescope_ensure_hotplug_restart_service()
-{
-	const char *home = getenv( "HOME" );
-	if ( !home || !*home )
+	const int fd = open( device, O_RDWR | O_CLOEXEC );
+	if ( fd < 0 )
 		return false;
 
-	const std::string configDir =
-		std::string( home ) + "/.config";
+	uint8_t offset = 0x00;
+	uint8_t edidHeader[8]{};
 
-	const std::string systemdDir =
-		configDir + "/systemd";
+	struct i2c_msg messages[2]{};
 
-	const std::string userDir =
-		systemdDir + "/user";
+	messages[0].addr  = edidAddress;
+	messages[0].flags = 0;
+	messages[0].len   = sizeof( offset );
+	messages[0].buf   = &offset;
 
-	const std::string servicePath =
-		userDir + "/gamescope-hotplug-restart.service";
+	messages[1].addr  = edidAddress;
+	messages[1].flags = I2C_M_RD;
+	messages[1].len   = sizeof( edidHeader );
+	messages[1].buf   = edidHeader;
 
-	static constexpr const char serviceContents[] =
-		"[Unit]\n"
-		"Description=Restart Gamescope after NVIDIA KMS hotplug event\n"
-		"\n"
-		"[Service]\n"
-		"Type=oneshot\n"
-		"ExecStart=/bin/bash -lc '"
-		"while systemctl --user is-active --quiet gamescope-session.service; "
-		"do sleep 0.1; done; "
-		"sleep 0.5; "
-		"exec steamos-session-select gamescope"
-		"'\n";
+	struct i2c_rdwr_ioctl_data transaction{};
+	transaction.msgs  = messages;
+	transaction.nmsgs = 2;
 
-	mkdir( configDir.c_str(), 0755 );
-	mkdir( systemdDir.c_str(), 0755 );
-	mkdir( userDir.c_str(), 0755 );
+	const bool success =
+		ioctl( fd, I2C_RDWR, &transaction ) >= 0;
 
-	// Rewrite the generated service whenever its contents differ.
-	{
-		FILE *existing = fopen( servicePath.c_str(), "r" );
+	close( fd );
 
-		if ( existing )
-		{
-			std::string contents;
-			char buffer[1024];
-
-			while ( true )
-			{
-				const size_t n =
-					fread( buffer, 1, sizeof( buffer ), existing );
-
-				contents.append( buffer, n );
-
-				if ( n < sizeof( buffer ) )
-					break;
-			}
-
-			fclose( existing );
-
-			if ( contents == serviceContents )
-				return true;
-		}
-	}
-
-	const std::string temporaryPath =
-		servicePath + ".tmp";
-
-	FILE *f = fopen( temporaryPath.c_str(), "w" );
-	if ( !f )
+	if ( !success )
 		return false;
 
-	const bool writeOK =
-		fputs( serviceContents, f ) >= 0;
-
-	const bool closeOK =
-		fclose( f ) == 0;
-
-	if ( !writeOK || !closeOK )
+	// Standard EDID header:
+	// 00 ff ff ff ff ff ff 00
+	static constexpr uint8_t expectedHeader[8] =
 	{
-		unlink( temporaryPath.c_str() );
-		return false;
-	}
+		0x00, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0x00
+	};
 
-	if ( rename( temporaryPath.c_str(), servicePath.c_str() ) != 0 )
-	{
-		unlink( temporaryPath.c_str() );
-		return false;
-	}
-
-	return system( "systemctl --user daemon-reload" ) == 0;
+	return memcmp(
+		edidHeader,
+		expectedHeader,
+		sizeof( expectedHeader ) ) == 0;
 }
 
 
@@ -1981,171 +1837,26 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
 {
 	if ( gamescope_nvidia_drm_loaded() )
 	{
-		using Clock = std::chrono::steady_clock;
-
-		static Clock::time_point s_lastEvent{};
-		static unsigned int s_repeatingEventCount = 0;
-
-		if ( !gamescope_ensure_hotplug_restart_service() )
-		{
-			wl_log.errorf(
-				"Failed to ensure Gamescope hotplug restart service" );
-		}
-
-		const Clock::time_point now = Clock::now();
-
-		const double processAgeSeconds =
-			std::chrono::duration<double>(
-				now - g_gamescope_nvidia_start_time ).count();
-
-		const std::string newSnapshot =
-			gamescope_get_nvidia_connector_snapshot();
-
-		// --------------------------------------------------------
-		// FAST PATH
-		// --------------------------------------------------------
-		if ( !newSnapshot.empty() )
-		{
-			if ( g_gamescope_nvidia_connector_snapshot.empty() )
-			{
-				g_gamescope_nvidia_connector_snapshot =
-					newSnapshot;
-			}
-			else if ( newSnapshot !=
-			          g_gamescope_nvidia_connector_snapshot )
-			{
-				// NVIDIA often corrects stale connector state shortly
-				// after a fresh Gamescope process starts. During the
-				// first 20 seconds, simply adopt that state.
-				if ( processAgeSeconds < 20.0 )
-				{
-					wl_log.infof(
-						"NVIDIA connector state changed during startup "
-						"(age %.2fs); refreshing baseline",
-						processAgeSeconds );
-
-					wl_log.infof(
-						"NVIDIA old connector state: %s",
-						g_gamescope_nvidia_connector_snapshot.c_str() );
-
-					wl_log.infof(
-						"NVIDIA new connector state: %s",
-						newSnapshot.c_str() );
-
-					g_gamescope_nvidia_connector_snapshot =
-						newSnapshot;
-				}
-				else
-				{
-					wl_log.infof(
-						"NVIDIA connector state changed at age %.2fs; "
-						"restarting Gamescope immediately",
-						processAgeSeconds );
-
-					wl_log.infof(
-						"NVIDIA old connector state: %s",
-						g_gamescope_nvidia_connector_snapshot.c_str() );
-
-					wl_log.infof(
-						"NVIDIA new connector state: %s",
-						newSnapshot.c_str() );
-
-					g_gamescope_nvidia_connector_snapshot =
-						newSnapshot;
-
-					const int restartResult = system(
-						"systemctl --user start --no-block "
-						"gamescope-hotplug-restart.service" );
-
-					if ( restartResult == 0 )
-					{
-						wl_log.infof(
-							"Gamescope restart scheduled; "
-							"terminating current compositor" );
-
-						raise( SIGTERM );
-					}
-					else
-					{
-						wl_log.errorf(
-							"Failed to start Gamescope hotplug restart service" );
-					}
-
-					return;
-				}
-			}
-		}
-
-		// --------------------------------------------------------
-		// FALLBACK
-		//
-		// Keep this active even during the 20-second settling period.
-		// --------------------------------------------------------
-		double intervalSeconds = 0.0;
-
-		if ( s_lastEvent.time_since_epoch().count() != 0 )
-		{
-			intervalSeconds =
-				std::chrono::duration<double>(
-					now - s_lastEvent ).count();
-
-			if ( intervalSeconds >= 7.5 &&
-			     intervalSeconds <= 15.0 )
-			{
-				s_repeatingEventCount++;
-			}
-			else
-			{
-				s_repeatingEventCount = 1;
-			}
-		}
-		else
-		{
-			s_repeatingEventCount = 1;
-		}
-
-		s_lastEvent = now;
+		const bool ddcPresent =
+			gamescope_nvidia_probe_hdmi_ddc();
 
 		wl_log.infof(
-			"NVIDIA KMS change event: age=%.2fs interval=%.2fs "
-			"repeating=%u/2",
-			processAgeSeconds,
-			intervalSeconds,
-			s_repeatingEventCount );
+			"NVIDIA HDMI DDC probe: %s",
+			ddcPresent ? "EDID detected" : "no EDID response" );
 
-		if ( s_repeatingEventCount >= 2 )
-		{
-			wl_log.infof(
-				"Detected repeating NVIDIA KMS hotplug storm; "
-				"restarting Gamescope" );
+		// The DDC transaction itself may wake/refresh NVIDIA's stale
+		// connector state. After probing, use Gamescope's normal DRM
+		// connector refresh path.
+		GetBackend()->DirtyState();
 
-			const int restartResult = system(
-				"systemctl --user start --no-block "
-				"gamescope-hotplug-restart.service" );
+		wl_log.infof(
+			"NVIDIA KMS change event: DDC probe complete; "
+			"requesting normal connector refresh" );
 
-			if ( restartResult == 0 )
-			{
-				wl_log.infof(
-					"Gamescope restart scheduled; "
-					"terminating current compositor" );
-
-				raise( SIGTERM );
-			}
-			else
-			{
-				wl_log.errorf(
-					"Failed to start Gamescope hotplug restart service" );
-			}
-
-			s_repeatingEventCount = 0;
-			return;
-		}
-
-		// NVIDIA: suppress the problematic live connector reprobe.
+		nudge_steamcompmgr();
 		return;
 	}
 
-	// Upstream behavior for non-NVIDIA.
 	GetBackend()->DirtyState();
 	wl_log.infof( "Got change event for KMS device" );
 	nudge_steamcompmgr();
