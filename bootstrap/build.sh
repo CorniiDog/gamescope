@@ -30,7 +30,6 @@ log "Building Gamescope using ${GS_CONTAINER_IMAGE}..."
 
 podman run \
     --rm \
-    --userns=keep-id \
     --security-opt label=disable \
     -v "${PROJECT_ROOT}:/src" \
     -w /src \
