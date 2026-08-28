@@ -3021,7 +3021,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		}
 		else
 		{
-			pHDRMetadata = drm->sdr_static_metadata.get();
+			//pHDRMetadata = drm->sdr_static_metadata.get();
+			pHDRMetadata = nullptr; // patch
 			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 		}
 
@@ -3147,7 +3148,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->pConnector->GetProperties().CRTC_ID->SetPendingValue( drm->req, drm->pCRTC->GetObjectId(), bForceInRequest );
 
 			if ( drm->pConnector->GetProperties().Colorspace )
-				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, 0, bForceInRequest );
+				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, uColorimetry, bForceInRequest );
 		}
 
 		if ( drm->pCRTC && !bSleep )
@@ -3174,7 +3175,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	if ( drm->pConnector && !bSleep )
 	{
 		if ( drm->pConnector->GetProperties().HDR_OUTPUT_METADATA )
-			drm->pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( drm->req, 0, bForceInRequest );
+			drm->pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( drm->req, pHDRMetadata ? pHDRMetadata->GetBlobValue() : 0lu, bForceInRequest );
 
 		if ( drm->pConnector->GetProperties().content_type )
 			drm->pConnector->GetProperties().content_type->SetPendingValue( drm->req, DRM_MODE_CONTENT_TYPE_GAME, bForceInRequest );
