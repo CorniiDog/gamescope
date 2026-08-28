@@ -3659,7 +3659,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	if ( bOutputCurrentlyActive && bModeActuallyChanging )
 	{
 		drm_log.infof(
-			"NVIDIA runtime modeset workaround: kernel mode change detected %dx%d@%uHz -> %dx%d@%uHz",
+			"NVIDIA runtime modeset workaround: %dx%d@%uHz -> %dx%d@%uHz",
 			currentKernelMode.hdisplay,
 			currentKernelMode.vdisplay,
 			currentKernelMode.vrefresh,
@@ -3798,9 +3798,6 @@ static bool drm_nvidia_runtime_resolution_teardown( struct drm_t *drm )
 	if ( !bNvidia )
 		return true;
 
-	drm_log.infof(
-		"NVIDIA runtime modeset workaround: tearing down active display before resolution change" );
-
 	// Ordinary Gamescope modesets disable and re-enable the display in the
 	// SAME atomic request. NVIDIA 575 can wedge while performing that live
 	// active->active transition. Commit a real inactive state first.
@@ -3931,9 +3928,6 @@ static bool drm_nvidia_runtime_resolution_teardown( struct drm_t *drm )
 
 	// Force liftoff to rebuild the plane assignment from the clean state.
 	g_LiftoffStateCache.clear();
-
-	drm_log.infof(
-		"NVIDIA runtime modeset workaround: display teardown committed successfully" );
 
 	return true;
 }
