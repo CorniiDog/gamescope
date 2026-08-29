@@ -95,6 +95,22 @@ bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/
 
 `--auto-upload` requires the GitHub CLI (`gh`) to be installed and authenticated.
 
+Build artifacts are placed in your home directory by default:
+
+~/gamescope-steamos-<SteamOS version>-x86_64.tar.gz
+~/gamescope-steamos-<SteamOS version>-x86_64.tar.gz.sha256
+~/gamescope-steamos-<SteamOS version>-x86_64.build-info.txt
+
+For example, on SteamOS 3.8.16:
+
+~/gamescope-steamos-3.8.16-x86_64.tar.gz
+~/gamescope-steamos-3.8.16-x86_64.tar.gz.sha256
+~/gamescope-steamos-3.8.16-x86_64.build-info.txt
+
+Use -o or --output to choose another directory:
+
+./bootstrap/compile.sh -o ~/releases
+
 ---
 
 ## NVIDIA / SteamOS Compatibility Changes
