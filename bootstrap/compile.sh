@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 OUTPUT_DIR="${HOME}"
 AUTO_UPLOAD=0
+FORCE_REBUILD=0
 
 usage()
 {
@@ -18,6 +19,7 @@ Usage: ./bootstrap/compile.sh [options]
 Options:
   -o, --output DIR    Output directory (default: ~/)
       --auto-upload   Create/update the matching GitHub release
+      --force-rebuild Ignore existing matching build artifacts
   -h, --help          Show this help
 EOF_USAGE
 }
@@ -31,6 +33,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --auto-upload)
             AUTO_UPLOAD=1
+            shift
+            ;;
+        --force-rebuild)
+            FORCE_REBUILD=1
             shift
             ;;
         -h|--help)
@@ -74,6 +80,41 @@ RUNTIME_DIR="${BUILD_DIR}/runtime"
 ARCHIVE="${OUTPUT_DIR}/${ASSET_NAME}"
 CHECKSUM="${ARCHIVE}.sha256"
 BUILD_INFO="${OUTPUT_DIR}/${ASSET_NAME%.tar.gz}.build-info.txt"
+
+NVIDIA_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
+CACHE_HIT=0
+
+metadata_value()
+{
+    local key="$1"
+    grep -m1 "^${key}=" "$BUILD_INFO" 2>/dev/null | cut -d= -f2-
+}
+
+if [[ "$FORCE_REBUILD" == "0" &&
+      -f "$ARCHIVE" &&
+      -f "$CHECKSUM" &&
+      -f "$BUILD_INFO" ]]; then
+
+    CACHED_COMMIT="$(metadata_value nvidia_fork_commit)"
+    CACHED_STEAMOS="$(metadata_value steamos_version)"
+    CACHED_CONTAINER="$(metadata_value container_image)"
+    CACHED_SHA="$(awk '{print $1}' "$CHECKSUM" | head -n1)"
+
+    if [[ "$CACHED_SHA" =~ ^[0-9a-fA-F]{64}$ &&
+          "$CACHED_COMMIT" == "$NVIDIA_COMMIT" &&
+          "$CACHED_STEAMOS" == "$STEAMOS_VERSION" &&
+          "$CACHED_CONTAINER" == "$GS_CONTAINER_IMAGE" &&
+          "${CACHED_SHA,,}" == "$(sha256_file "$ARCHIVE")" ]]; then
+
+        CACHE_HIT=1
+
+        VALVE_BASE_COMMIT="$(metadata_value valve_base_commit)"
+        VALVE_MASTER_COMMIT="$(metadata_value valve_master_at_build)"
+
+        log "Existing build artifacts match the current repository revision."
+        log "Skipping compilation."
+    fi
+fi
 
 PACKAGE_DIR="$(mktemp -d)"
 
