@@ -107,12 +107,25 @@ podman run \
 
         mkdir -p "'"${GS_BUILD_DIR_NAME}"'/runtime"
 
-        cp -L \
-            /usr/lib64/libdisplay-info.so.2 \
-            "'"${GS_BUILD_DIR_NAME}"'/runtime/libdisplay-info.so.2"
+        RUNTIME_LIBS=(
+            libdisplay-info.so.2
+        )
+
+        for runtime_lib in "${RUNTIME_LIBS[@]}"; do
+            runtime_path="/usr/lib64/${runtime_lib}"
+
+            [[ -f "$runtime_path" ]] || {
+                printf "Required bundled runtime library not found: %s\n" "$runtime_path" >&2
+                exit 1
+            }
+
+            cp -L \
+                "$runtime_path" \
+                "'"${GS_BUILD_DIR_NAME}"'/runtime/${runtime_lib}"
+        done
 
         patchelf \
-            --set-rpath /opt/gamescope-nvidia/lib \
+            --set-rpath "'"${GS_PREFIX}"'/lib" \
             "'"${GS_BUILD_DIR_NAME}"'/src/gamescope"
     '
 

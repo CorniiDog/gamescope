@@ -8,6 +8,11 @@ This is tested on:
 
 ---
 
+## Prerequisite
+1. A fresh SteamOS installation. You can install a fresh SteamOS install [here](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227)
+2. Make sure to set your own password.
+	Open konsole/terminal, type explicitly `passwd` and hit [Enter]. Put your own password in.
+
 ## Automated installation
 In a fresh SteamOS instance, open a terminal and run this command to automatically compile and install onto your system:
 
@@ -22,7 +27,13 @@ sudo reboot
 
 Now you have updated binaries that fixes some of the NVIDIA jankiness :)
 
+## Automated uninstall
 
+Open terminal and type
+
+```
+sudo /opt/gamescope-nvidia/bin/uninstall
+```
 
 ## NVIDIA / SteamOS Compatibility Changes
 

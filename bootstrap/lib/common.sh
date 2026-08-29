@@ -15,7 +15,7 @@ GS_SYSTEM_BIN="${GS_SYSTEM_BIN:-/usr/bin/gamescope}"
 GS_STOCK_BIN="${GS_STOCK_DIR}/gamescope"
 
 GS_BUILD_DIR_NAME="${GS_BUILD_DIR_NAME:-build-bootstrap}"
-GS_CONTAINER_IMAGE="${GS_CONTAINER_IMAGE:-fedora:42}"
+GS_CONTAINER_IMAGE="${GS_CONTAINER_IMAGE:-registry.fedoraproject.org/fedora@sha256:63773f454664cd77e239f8e0b13ae7f18effe9e3d6612a325b5646eb3bda11f1}"
 
 PROJECT_ROOT="$(
     cd "$(dirname "${BASH_SOURCE[0]}")/../.."
@@ -129,6 +129,11 @@ sha256_file()
     sha256sum "$file" | awk '{print $1}'
 }
 
+is_sha256()
+{
+    [[ "${1:-}" =~ ^[0-9a-fA-F]{64}$ ]]
+}
+
 get_gamescope_package_version()
 {
     if command -v pacman >/dev/null 2>&1; then
@@ -170,7 +175,7 @@ release_tag_for_steamos()
 
 release_asset_for_steamos()
 {
-    printf 'gamescope-steamos-%s-x86_64\n' "$(get_steamos_version)"
+    printf 'gamescope-steamos-%s-x86_64.tar.gz\n' "$(get_steamos_version)"
 }
 
 as_root()
@@ -180,4 +185,19 @@ as_root()
     else
         sudo "$@"
     fi
+}
+
+acquire_lifecycle_lock()
+{
+    need_cmd flock
+
+    local lock_file="/run/lock/gamescope-nvidia.lock"
+
+    as_root touch "$lock_file"
+    as_root chmod 0666 "$lock_file"
+
+    exec 9>"$lock_file"
+
+    flock -n 9 ||
+        die "Another gamescope-nvidia install, uninstall, or integrity operation is already running."
 }
