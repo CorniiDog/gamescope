@@ -189,3 +189,18 @@ chmod +x \
 
 "${PROJECT_DIR}/bootstrap/setup.sh" \
     "$@"
+
+echo
+read -r -p "[gamescope-nvidia] Restart the system now? [y/N]: " REBOOT_REPLY
+
+case "$REBOOT_REPLY" in
+    y|Y|yes|YES|Yes)
+        echo "[gamescope-nvidia] Restarting system..."
+        cleanup
+        trap - EXIT
+        sudo reboot
+        ;;
+    *)
+        echo "[gamescope-nvidia] Restart skipped."
+        ;;
+esac
