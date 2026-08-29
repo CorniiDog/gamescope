@@ -39,8 +39,7 @@ verify_system_gamescope
 MISSING_LIBS="$(ldd "$SOURCE_BIN" 2>&1 | grep "not found" || true)"
 
 if [[ -n "$MISSING_LIBS" ]]; then
-    printf "%s
-" "$MISSING_LIBS" >&2
+    printf "%s\n" "$MISSING_LIBS" >&2
     die "Candidate Gamescope binary has missing runtime libraries. Refusing to install."
 fi
 
@@ -70,8 +69,7 @@ if [[ -f "$GS_STOCK_BIN" ]]; then
     STOCK_MISSING_LIBS="$(ldd "$GS_STOCK_BIN" 2>&1 | grep "not found" || true)"
 
     if [[ -n "$STOCK_MISSING_LIBS" ]]; then
-        printf "%s
-" "$STOCK_MISSING_LIBS" >&2
+        printf "%s\n" "$STOCK_MISSING_LIBS" >&2
         die "Existing stock Gamescope backup is not runnable. Refusing to continue."
     fi
 fi
