@@ -125,27 +125,41 @@ bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/
 
 ### Uploading a release
 
-Maintainers can automatically create or update the matching GitHub release with:
+These commands are intended for maintainers who want to keep precompiled gamescope-nvidia releases up to date with minimal manual work.
+
+The idea is simple: start from a fresh SteamOS installation, run one command, and the script can automatically:
+
+* check the current SteamOS version
+* check the latest gamescope-nvidia repository revision
+* reuse an already-valid local build when possible
+* compile a new build when required
+* package the correct release files
+* authenticate with GitHub
+* create or update the matching GitHub release
+* upload the release artifacts automatically
+
+This makes maintaining releases much easier when SteamOS updates or when gamescope-nvidia itself changes. A maintainer can install a fresh SteamOS version, run the release command, and publish the corresponding precompiled build without manually creating archives, checksums, release notes, or GitHub release assets.
+
+For example, if SteamOS updates from `3.8.16` to `3.8.17`, running the command on a fresh SteamOS 3.8.17 installation will build the appropriate version and publish it under the matching SteamOS release.
+
+Likewise, if gamescope-nvidia receives new NVIDIA fixes while the SteamOS version stays the same, the maintainer can run the command again to rebuild and update that SteamOS release.
+
+To compile and automatically publish the matching GitHub release:
 
 ```bash
 ./bootstrap/compile.sh --auto-upload
 ```
 
-Or with the online compiler:
+Or, on a fresh SteamOS installation without manually cloning the repository:
 
 ```bash
 bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/compile_online.sh?x=$(date +%s)") -o ~/releases --auto-upload
 ```
 
-If an existing local bundle matches the current repository revision, it will be reused and uploaded without compiling again.
+The online version is intended to make the release process essentially one-command: check, build if necessary, package, authenticate, and upload.
 
-`--auto-upload` requires the GitHub CLI (`gh`) to be installed and authenticated.
+Normal users do not need `--auto-upload`. It is specifically for maintainers publishing precompiled releases for other users to install.
 
-If necessary, authenticate with:
-
-```bash
-gh auth login
-```
 
 ### Installing a local build
 
