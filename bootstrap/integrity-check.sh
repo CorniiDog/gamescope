@@ -67,12 +67,9 @@ if [[ -f "$GS_STEAMOS_VERSION_FILE" ]]; then
 
     if [[ "$CURRENT_STEAMOS" != "$INSTALLED_STEAMOS" ]]; then
         log "SteamOS changed from ${INSTALLED_STEAMOS} to ${CURRENT_STEAMOS}."
-        log "Checking for a matching gamescope-nvidia release."
-
-        if [[ -x "${GS_PREFIX}/bin/update" ]]; then
-            "${GS_PREFIX}/bin/update" ||                 log "No matching release is available yet; leaving Valve Gamescope unchanged."
-        fi
-
+        log "Installed gamescope-nvidia was built for a different SteamOS version."
+        log "Leaving Valve Gamescope unchanged."
+        log "Rerun the gamescope-nvidia installer to install a compatible build."
         exit 0
     fi
 

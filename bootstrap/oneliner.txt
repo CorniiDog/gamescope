@@ -23,6 +23,69 @@ need()
 }
 
 need git
+need sha256sum
+need sudo
+
+GS_PREFIX="${GS_PREFIX:-/opt/gamescope-nvidia}"
+GS_SYSTEM_BIN="${GS_SYSTEM_BIN:-/usr/bin/gamescope}"
+GS_CURRENT_BIN="${GS_PREFIX}/current/gamescope"
+GS_EXPECTED_SHA="${GS_PREFIX}/state/expected-sha256"
+GS_STEAMOS_VERSION_FILE="${GS_PREFIX}/state/steamos-version"
+GS_SOURCE_REVISION_FILE="${GS_PREFIX}/state/source-revision"
+
+#
+# A normal second invocation should be cheap and idempotent.
+# Explicit arguments such as --build-from-source intentionally bypass this.
+#
+if [[ $# -eq 0 &&
+      -x "$GS_CURRENT_BIN" &&
+      -x "$GS_SYSTEM_BIN" &&
+      -f "$GS_EXPECTED_SHA" &&
+      -f "$GS_STEAMOS_VERSION_FILE" &&
+      -f "$GS_SOURCE_REVISION_FILE" ]]; then
+
+    source /etc/os-release
+
+    CURRENT_STEAMOS="${VERSION_ID:-unknown}"
+    INSTALLED_STEAMOS="$(cat "$GS_STEAMOS_VERSION_FILE")"
+    INSTALLED_REVISION="$(cat "$GS_SOURCE_REVISION_FILE")"
+    REMOTE_REVISION="$(git ls-remote "https://github.com/${REPO}.git" "refs/heads/${BRANCH}" 2>/dev/null | cut -f1 || true)"
+    EXPECTED_SHA="$(cat "$GS_EXPECTED_SHA")"
+    CACHE_SHA="$(sha256sum "$GS_CURRENT_BIN" | awk '{print $1}')"
+    SYSTEM_SHA="$(sha256sum "$GS_SYSTEM_BIN" | awk '{print $1}')"
+
+    if [[ "$CURRENT_STEAMOS" == "$INSTALLED_STEAMOS" &&
+          "${CACHE_SHA,,}" == "${EXPECTED_SHA,,}" ]]; then
+
+        if [[ "${SYSTEM_SHA,,}" == "${EXPECTED_SHA,,}" ]]; then
+            if [[ -z "$REMOTE_REVISION" ]]; then
+                echo "[gamescope-nvidia] Already installed and healthy."
+                echo "[gamescope-nvidia] Unable to check for updates; keeping current installation."
+                exit 0
+            fi
+
+            if [[ "$REMOTE_REVISION" == "$INSTALLED_REVISION" ]]; then
+                echo "[gamescope-nvidia] Already installed, healthy, and current."
+                echo "[gamescope-nvidia] Nothing to do."
+                exit 0
+            fi
+
+            echo "[gamescope-nvidia] A newer gamescope-nvidia revision is available."
+            echo "[gamescope-nvidia] Updating ${INSTALLED_REVISION:0:7} -> ${REMOTE_REVISION:0:7}."
+        else
+            if [[ -x "${GS_PREFIX}/bin/integrity-check" ]]; then
+                echo "[gamescope-nvidia] Installation exists but /usr/bin/gamescope changed."
+                echo "[gamescope-nvidia] Requesting administrator privileges..."
+                sudo -v
+                sudo "${GS_PREFIX}/bin/integrity-check"
+                exit 0
+            fi
+        fi
+    fi
+fi
+
+echo "[gamescope-nvidia] Requesting administrator privileges..."
+sudo -v
 
 echo "[gamescope-nvidia] Downloading ${REPO}:${BRANCH}..."
 

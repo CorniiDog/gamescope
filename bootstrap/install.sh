@@ -163,6 +163,11 @@ printf '%s\n' "$PATCHED_SHA" |
 printf '%s\n' "$(get_steamos_version)" |
     sudo tee "${GS_STATE_DIR}/steamos-version" >/dev/null
 
+SOURCE_REVISION="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
+
+printf '%s\n' "$SOURCE_REVISION" |
+    sudo tee "${GS_STATE_DIR}/source-revision" >/dev/null
+
 #
 # Replace only the SteamOS Gamescope binary.
 #
@@ -205,7 +210,8 @@ EOF
 
 log "Installing maintenance tools..."
 
-sudo install -o root -g root -m 0755 "${SCRIPT_DIR}/update.sh" "${MAINTENANCE_DIR}/update"
+sudo rm -f "${MAINTENANCE_DIR}/update"
+
 sudo install -o root -g root -m 0755 "${SCRIPT_DIR}/uninstall.sh" "${MAINTENANCE_DIR}/uninstall"
 sudo install -o root -g root -m 0755 "${SCRIPT_DIR}/integrity-check.sh" "${MAINTENANCE_DIR}/integrity-check"
 sudo install -o root -g root -m 0644 "${SCRIPT_DIR}/lib/common.sh" "${MAINTENANCE_DIR}/lib/common.sh"
