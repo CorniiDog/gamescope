@@ -59,11 +59,72 @@ REMOTE_COMMIT="$(
     exit 1
 }
 
+need curl
+
+REMOTE_COMMON="$(
+    curl -fsSL         "https://raw.githubusercontent.com/${REPO}/${REMOTE_COMMIT}/bootstrap/lib/common.sh"
+)" || {
+    echo "[gamescope-nvidia] Could not read remote build configuration." >&2
+    exit 1
+}
+
+REMOTE_CONTAINER_IMAGE="$(
+    printf "%s\n" "$REMOTE_COMMON" |
+        sed -n 's/^GS_CONTAINER_IMAGE="${GS_CONTAINER_IMAGE:-\(.*\)}"/\1/p' |
+        head -n1
+)"
+
+[[ -n "$REMOTE_CONTAINER_IMAGE" ]] || {
+    echo "[gamescope-nvidia] Could not determine remote build container image." >&2
+    exit 1
+}
+
 if [[ "$AUTO_UPLOAD" == "1" ]]; then
-    command -v gh >/dev/null 2>&1 || {
-        echo "[gamescope-nvidia] GitHub CLI (gh) is required for --auto-upload." >&2
-        exit 1
-    }
+    if ! command -v gh >/dev/null 2>&1; then
+        echo
+        read -r -p "[gamescope-nvidia] GitHub CLI (gh) is not installed. Install it now? [y/N]: " INSTALL_GH_REPLY
+
+        case "$INSTALL_GH_REPLY" in
+            y|Y|yes|YES|Yes)
+                need sudo
+                need pacman
+
+                GH_READONLY_WAS_ENABLED=0
+
+                if command -v steamos-readonly >/dev/null 2>&1 &&
+                   steamos-readonly status 2>/dev/null | grep -qi enabled; then
+                    echo "[gamescope-nvidia] Disabling SteamOS read-only mode temporarily..."
+                    sudo steamos-readonly disable
+                    GH_READONLY_WAS_ENABLED=1
+                fi
+
+                echo "[gamescope-nvidia] Installing GitHub CLI..."
+
+                if ! sudo pacman -Sy --needed --noconfirm github-cli; then
+                    if [[ "$GH_READONLY_WAS_ENABLED" == "1" ]]; then
+                        sudo steamos-readonly enable || true
+                    fi
+
+                    echo "[gamescope-nvidia] GitHub CLI installation failed." >&2
+                    exit 1
+                fi
+
+                if [[ "$GH_READONLY_WAS_ENABLED" == "1" ]]; then
+                    echo "[gamescope-nvidia] Re-enabling SteamOS read-only mode..."
+                    sudo steamos-readonly enable
+                fi
+
+                command -v gh >/dev/null 2>&1 || {
+                    echo "[gamescope-nvidia] GitHub CLI installation completed but gh was not found." >&2
+                    exit 1
+                }
+                ;;
+            *)
+                echo "[gamescope-nvidia] GitHub CLI is required for --auto-upload."
+                exit 1
+                ;;
+        esac
+    fi
 
     if ! gh auth status --hostname github.com >/dev/null 2>&1; then
         echo "[gamescope-nvidia] GitHub authentication is required for --auto-upload."
@@ -167,6 +228,11 @@ if [[ "$FORCE_REBUILD" == "0" && -f "$BUNDLE" ]]; then
                     cut -d= -f2-
             )"
 
+            CACHED_CONTAINER="$(
+                grep -m1 "^container_image=" "$BUILD_INFO" 2>/dev/null |
+                    cut -d= -f2-
+            )"
+
             EXPECTED_SHA="$(
                 awk "{print \$1}" "$CHECKSUM" |
                     head -n1
@@ -180,6 +246,7 @@ if [[ "$FORCE_REBUILD" == "0" && -f "$BUNDLE" ]]; then
             if [[ "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{64}$ &&
                   "$CACHED_COMMIT" == "$REMOTE_COMMIT" &&
                   "$CACHED_STEAMOS" == "$STEAMOS_VERSION" &&
+                  "$CACHED_CONTAINER" == "$REMOTE_CONTAINER_IMAGE" &&
                   "${EXPECTED_SHA,,}" == "${ACTUAL_SHA,,}" ]]; then
 
                 CACHE_HIT=1

@@ -59,8 +59,47 @@ need_cmd unzip
 require_steamos
 
 if [[ "$AUTO_UPLOAD" == "1" ]]; then
-    command -v gh >/dev/null 2>&1 ||
-        die "GitHub CLI (gh) is required for --auto-upload."
+    if ! command -v gh >/dev/null 2>&1; then
+        echo
+        read -r -p "[gamescope-nvidia] GitHub CLI (gh) is not installed. Install it now? [y/N]: " INSTALL_GH_REPLY
+
+        case "$INSTALL_GH_REPLY" in
+            y|Y|yes|YES|Yes)
+                need_cmd sudo
+                need_cmd pacman
+
+                GH_READONLY_WAS_ENABLED=0
+
+                if command -v steamos-readonly >/dev/null 2>&1 &&
+                   steamos-readonly status 2>/dev/null | grep -qi enabled; then
+                    log "Disabling SteamOS read-only mode temporarily..."
+                    sudo steamos-readonly disable
+                    GH_READONLY_WAS_ENABLED=1
+                fi
+
+                log "Installing GitHub CLI..."
+
+                if ! sudo pacman -Sy --needed --noconfirm github-cli; then
+                    if [[ "$GH_READONLY_WAS_ENABLED" == "1" ]]; then
+                        sudo steamos-readonly enable || true
+                    fi
+
+                    die "GitHub CLI installation failed."
+                fi
+
+                if [[ "$GH_READONLY_WAS_ENABLED" == "1" ]]; then
+                    log "Re-enabling SteamOS read-only mode..."
+                    sudo steamos-readonly enable
+                fi
+
+                command -v gh >/dev/null 2>&1 ||
+                    die "GitHub CLI installation completed but gh was not found."
+                ;;
+            *)
+                die "GitHub CLI is required for --auto-upload."
+                ;;
+        esac
+    fi
 
     if ! gh auth status --hostname github.com >/dev/null 2>&1; then
         log "GitHub authentication is required for --auto-upload."
