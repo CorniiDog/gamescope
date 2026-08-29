@@ -168,11 +168,17 @@ printf '%s\n' "$(get_steamos_version)" |
 #
 log "Installing patched Gamescope..."
 
+INSTALL_TMP="${GS_SYSTEM_BIN}.gamescope-nvidia-install.$$"
+
 sudo install \
     -o root \
     -g root \
     -m 0755 \
     "$CURRENT_BIN" \
+    "$INSTALL_TMP"
+
+sudo mv -f \
+    "$INSTALL_TMP" \
     "$GS_SYSTEM_BIN"
 
 #
