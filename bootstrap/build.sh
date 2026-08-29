@@ -86,7 +86,8 @@ podman run \
             xorg-x11-server-Xwayland \
             xorg-x11-server-Xwayland-devel \
             edid-decode \
-            google-benchmark-devel
+            google-benchmark-devel \
+            catch2-devel
 
         if [[ -d "'"${GS_BUILD_DIR_NAME}"'/meson-private" ]]; then
             meson setup \
