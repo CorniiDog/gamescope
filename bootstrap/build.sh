@@ -124,4 +124,4 @@ ok "Build successful."
 printf '\nBinary:\n'
 printf '  %s\n\n' "$OUTPUT_BIN"
 
-"$OUTPUT_BIN" --version || true
+LD_LIBRARY_PATH="${BUILD_DIR}/runtime" "$OUTPUT_BIN" --version

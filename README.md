@@ -6,11 +6,23 @@ This is tested on:
 - SteamOS 3.8.16
 - NVIDIA 575-Open drivers (this came pre-installed w/ SteamOS 3.8.16, nothing on your end you need to do)
 
-I did create a one-liner that compiles and sets everything up.
+---
+
+## Automated installation
+In a fresh SteamOS instance, open a terminal and run this command to automatically compile and install onto your system:
 
 ```bash
 cd ~ && bash <(curl -fsSL "https://github.com/CorniiDog/gamescope-nvidia/raw/refs/heads/master/bootstrap/oneliner.txt?x=$(date +%s)")
 ```
+
+Then restart your device
+```
+sudo reboot
+```
+
+Now you have updated binaries that fixes some of the NVIDIA jankiness :)
+
+
 
 ## NVIDIA / SteamOS Compatibility Changes
 
