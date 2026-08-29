@@ -138,13 +138,23 @@ if [[ "$AUTO_UPLOAD" == "1" ]]; then
     if ! gh auth status --hostname github.com >/dev/null 2>&1; then
         echo "[gamescope-nvidia] GitHub authentication is required for --auto-upload."
         echo
-        echo "[gamescope-nvidia] Starting GitHub browser/device authentication..."
+
+        if [[ "$YES" == "1" ]]; then
+            echo "[gamescope-nvidia] -y accepted all automatic confirmations."
+            echo "[gamescope-nvidia] GitHub account authorization cannot be completed automatically."
+        fi
+
+        echo "[gamescope-nvidia] A one-time GitHub browser/device login is required."
+        echo "[gamescope-nvidia] Follow the GitHub CLI instructions shown below."
         echo
 
         gh auth login \
             --hostname github.com \
             --git-protocol https \
             --web
+
+        echo
+        echo "[gamescope-nvidia] Verifying GitHub authentication..."
 
         gh auth status --hostname github.com >/dev/null 2>&1 || {
             echo "[gamescope-nvidia] GitHub authentication was not completed." >&2
