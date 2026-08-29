@@ -9,7 +9,7 @@ TMP_DIR="$(mktemp -d)"
 
 cleanup()
 {
-    rm -rf "$TMP_DIR"
+    rm -rf "$TMP_DIR" 2>/dev/null || sudo rm -rf "$TMP_DIR"
 }
 
 trap cleanup EXIT
@@ -43,5 +43,5 @@ chmod +x \
     "${PROJECT_DIR}/bootstrap/install.sh" \
     "${PROJECT_DIR}/bootstrap/uninstall.sh"
 
-    "${PROJECT_DIR}/bootstrap/setup.sh" \
+"${PROJECT_DIR}/bootstrap/setup.sh" \
     "$@"

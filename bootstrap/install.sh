@@ -29,11 +29,20 @@ MAINTENANCE_DIR="${GS_PREFIX}/bin"
 require_steamos
 require_nvidia
 ensure_sudo
+need_cmd ldd
 
 verify_system_gamescope
 
 [[ -x "$SOURCE_BIN" ]] ||
     die "Built Gamescope binary not found: $SOURCE_BIN"
+
+MISSING_LIBS="$(ldd "$SOURCE_BIN" 2>&1 | grep "not found" || true)"
+
+if [[ -n "$MISSING_LIBS" ]]; then
+    printf "%s
+" "$MISSING_LIBS" >&2
+    die "Candidate Gamescope binary has missing runtime libraries. Refusing to install."
+fi
 
 log "Gamescope NVIDIA installer"
 log "Source: ${SOURCE_BIN}"
@@ -53,6 +62,31 @@ sudo mkdir -p \
     "$GS_STATE_DIR" \
     "$CURRENT_DIR" \
     "$MAINTENANCE_DIR/lib"
+
+#
+# Validate any existing stock backup before trusting it.
+#
+if [[ -f "$GS_STOCK_BIN" ]]; then
+    STOCK_MISSING_LIBS="$(ldd "$GS_STOCK_BIN" 2>&1 | grep "not found" || true)"
+
+    if [[ -n "$STOCK_MISSING_LIBS" ]]; then
+        printf "%s
+" "$STOCK_MISSING_LIBS" >&2
+        die "Existing stock Gamescope backup is not runnable. Refusing to continue."
+    fi
+fi
+
+#
+# Never mistake our previously patched binary for Valve stock.
+#
+if [[ ! -f "$GS_STOCK_BIN" && -f "${GS_STATE_DIR}/patched-sha256" ]]; then
+    CURRENT_SYSTEM_SHA="$(sha256_file "$GS_SYSTEM_BIN")"
+    PREVIOUS_PATCHED_SHA="$(cat "${GS_STATE_DIR}/patched-sha256")"
+
+    if [[ "$CURRENT_SYSTEM_SHA" == "$PREVIOUS_PATCHED_SHA" ]]; then
+        die "Current system Gamescope matches the previous patched binary. Refusing to save it as Valve stock."
+    fi
+fi
 
 #
 # Backup the original Valve binary exactly once.
