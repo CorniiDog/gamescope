@@ -1,39 +1,66 @@
 ## Fork of gamescope
 
-This is a gamescope fork that fixes many issues NVIDIA-side. 
+This is a Gamescope fork that fixes several NVIDIA-specific issues on SteamOS.
 
-This is tested on:
-- SteamOS 3.8.16
-- NVIDIA 575-Open drivers (this came pre-installed w/ SteamOS 3.8.16, nothing on your end you need to do)
+Tested on:
+
+* SteamOS 3.8.16
+* NVIDIA 575 Open drivers (included with SteamOS 3.8.16)
 
 ---
 
 ## Prerequisite
-1. A fresh SteamOS installation. You can install a fresh SteamOS install [here](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227)
-2. Make sure to set your own password.
-	Open konsole/terminal, type explicitly `passwd` and hit [Enter]. Put your own password in.
+
+1. A fresh SteamOS installation. You can install SteamOS [here](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227).
+
+2. Set a password for the `deck` user.
+
+   Open Konsole/Terminal and run:
+
+   ```bash
+   passwd
+   ```
+
+---
 
 ## Automated installation
-In a fresh SteamOS instance, open a terminal and run this command to automatically compile and install onto your system:
+
+Open Konsole/Terminal and run:
 
 ```bash
 cd ~ && bash <(curl -fsSL "https://github.com/CorniiDog/gamescope-nvidia/raw/refs/heads/master/bootstrap/oneliner.txt?x=$(date +%s)")
 ```
 
-Then restart your device
-```
+The installer will automatically use a compatible precompiled release when available, or build Gamescope from source if needed.
+
+It backs up Valve's original Gamescope, installs the NVIDIA-compatible build, and removes temporary build files when finished.
+
+Then restart your device:
+
+```bash
 sudo reboot
 ```
 
-Now you have updated binaries that fixes some of the NVIDIA jankiness :)
+---
+
+## Updating
+
+Run the same installation command again.
+
+If your installation is already current, nothing will be rebuilt.
+
+---
 
 ## Automated uninstall
 
-Open terminal and type
+Open Konsole/Terminal and run:
 
-```
+```bash
 sudo /opt/gamescope-nvidia/bin/uninstall
 ```
+
+This restores Valve's Gamescope and removes gamescope-nvidia.
+
 
 ## NVIDIA / SteamOS Compatibility Changes
 
