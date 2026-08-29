@@ -303,6 +303,8 @@ if [[ "$CACHE_HIT" == "0" ]]; then
 
     BUILD_TIMESTAMP="$(date --iso-8601=seconds)"
 
+    mkdir -p "$RELEASE_FILES_DIR"
+
     #
     # Build metadata.
     #
