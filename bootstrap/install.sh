@@ -73,35 +73,47 @@ sudo mkdir -p \
     "$MAINTENANCE_DIR/lib"
 
 #
-# Validate any existing stock backup before trusting it.
+# Determine whether the Valve backup belongs to this SteamOS version.
 #
-if [[ -f "$GS_STOCK_BIN" ]]; then
-    STOCK_MISSING_LIBS="$(ldd "$GS_STOCK_BIN" 2>&1 | grep "not found" || true)"
+CURRENT_STEAMOS="$(get_steamos_version)"
+PREVIOUS_STEAMOS=""
+
+if [[ -f "${GS_STATE_DIR}/steamos-version" ]]; then
+    PREVIOUS_STEAMOS="$(cat "${GS_STATE_DIR}/steamos-version")"
+fi
+
+REFRESH_STOCK=0
+
+if [[ ! -f "$GS_STOCK_BIN" ]]; then
+    REFRESH_STOCK=1
+elif [[ -n "$PREVIOUS_STEAMOS" && "$CURRENT_STEAMOS" != "$PREVIOUS_STEAMOS" ]]; then
+    log "SteamOS changed from ${PREVIOUS_STEAMOS} to ${CURRENT_STEAMOS}."
+
+    if [[ -f "${GS_STATE_DIR}/patched-sha256" ]]; then
+        CURRENT_SYSTEM_SHA="$(sha256_file "$GS_SYSTEM_BIN")"
+        PREVIOUS_PATCHED_SHA="$(cat "${GS_STATE_DIR}/patched-sha256")"
+
+        if [[ "$CURRENT_SYSTEM_SHA" == "$PREVIOUS_PATCHED_SHA" ]]; then
+            die "SteamOS changed, but /usr/bin/gamescope still matches the previous patched binary. Refusing to overwrite the Valve backup."
+        fi
+    fi
+
+    REFRESH_STOCK=1
+fi
+
+if [[ "$REFRESH_STOCK" -eq 1 ]]; then
+    STOCK_MISSING_LIBS="$(ldd "$GS_SYSTEM_BIN" 2>&1 | grep "not found" || true)"
 
     if [[ -n "$STOCK_MISSING_LIBS" ]]; then
         printf "%s\n" "$STOCK_MISSING_LIBS" >&2
-        die "Existing stock Gamescope backup is not runnable. Refusing to continue."
+        die "Current SteamOS Gamescope is not runnable. Refusing to save it as Valve stock."
     fi
-fi
 
-#
-# Never mistake our previously patched binary for Valve stock.
-#
-if [[ ! -f "$GS_STOCK_BIN" && -f "${GS_STATE_DIR}/patched-sha256" ]]; then
-    CURRENT_SYSTEM_SHA="$(sha256_file "$GS_SYSTEM_BIN")"
-    PREVIOUS_PATCHED_SHA="$(cat "${GS_STATE_DIR}/patched-sha256")"
-
-    if [[ "$CURRENT_SYSTEM_SHA" == "$PREVIOUS_PATCHED_SHA" ]]; then
-        die "Current system Gamescope matches the previous patched binary. Refusing to save it as Valve stock."
+    if [[ -f "$GS_STOCK_BIN" ]]; then
+        log "Refreshing Valve Gamescope backup for SteamOS ${CURRENT_STEAMOS}..."
+    else
+        log "Backing up Valve Gamescope..."
     fi
-fi
-
-#
-# Backup the original Valve binary exactly once.
-#
-if [[ ! -f "$GS_STOCK_BIN" ]]; then
-
-    log "Backing up Valve Gamescope..."
 
     STOCK_SHA="$(sha256_file "$GS_SYSTEM_BIN")"
     STOCK_VERSION="$(get_gamescope_package_version)"
@@ -117,12 +129,16 @@ if [[ ! -f "$GS_STOCK_BIN" ]]; then
     printf '%s\n' "$STOCK_VERSION" |
         sudo tee "${GS_STATE_DIR}/stock-package-version" >/dev/null
 
-    ok "Stock Gamescope backed up."
-
+    ok "Valve Gamescope backup saved."
 else
+    STOCK_MISSING_LIBS="$(ldd "$GS_STOCK_BIN" 2>&1 | grep "not found" || true)"
 
-    log "Existing stock backup found."
+    if [[ -n "$STOCK_MISSING_LIBS" ]]; then
+        printf "%s\n" "$STOCK_MISSING_LIBS" >&2
+        die "Existing stock Gamescope backup is not runnable. Refusing to continue."
+    fi
 
+    log "Existing stock backup found for SteamOS ${CURRENT_STEAMOS}."
 fi
 
 #
