@@ -239,7 +239,11 @@ if [[ "$CACHE_HIT" == "0" ]]; then
     if [[ "$(git -C "$PROJECT_ROOT" rev-parse --is-shallow-repository)" == "true" ]]; then
         log "Fetching repository history for provenance..."
 
-        git -C "$PROJECT_ROOT" fetch         --quiet         --unshallow         origin
+        git -C "$PROJECT_ROOT" fetch \
+            --quiet \
+            --unshallow \
+            --recurse-submodules=no \
+            origin
     fi
 
     NVIDIA_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
@@ -265,6 +269,7 @@ if [[ "$CACHE_HIT" == "0" ]]; then
     git -C "$PROJECT_ROOT" fetch \
         --quiet \
         --no-tags \
+        --recurse-submodules=no \
         https://github.com/ValveSoftware/gamescope.git \
         "master:${VALVE_TEMP_REF}"
 
