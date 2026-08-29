@@ -30,6 +30,6 @@ git clone \
     "https://github.com/${REPO}.git" \
     "${TMP_DIR}/gamescope-nvidia"
 
-chmod +x "${TMP_DIR}/gamescope-nvidia/bootstrap/compile.sh"
+chmod +x     "${TMP_DIR}/gamescope-nvidia/bootstrap/compile.sh"     "${TMP_DIR}/gamescope-nvidia/bootstrap/build.sh"
 
 "${TMP_DIR}/gamescope-nvidia/bootstrap/compile.sh" "$@"
