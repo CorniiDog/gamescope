@@ -10,6 +10,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 OUTPUT_DIR="${HOME}"
 AUTO_UPLOAD=0
 FORCE_REBUILD=0
+YES=0
 
 usage()
 {
@@ -20,6 +21,7 @@ Options:
   -o, --output DIR    Output directory (default: ~/)
       --auto-upload   Create/update the matching GitHub release
       --force-rebuild Ignore existing matching build artifacts
+  -y, --yes           Automatically confirm prompts
   -h, --help          Show this help
 EOF_USAGE
 }
@@ -37,6 +39,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-rebuild)
             FORCE_REBUILD=1
+            shift
+            ;;
+        -y|--yes)
+            YES=1
             shift
             ;;
         -h|--help)
@@ -60,8 +66,12 @@ require_steamos
 
 if [[ "$AUTO_UPLOAD" == "1" ]]; then
     if ! command -v gh >/dev/null 2>&1; then
-        echo
-        read -r -p "[gamescope-nvidia] GitHub CLI (gh) is not installed. Install it now? [y/N]: " INSTALL_GH_REPLY
+        if [[ "$YES" == "1" ]]; then
+            INSTALL_GH_REPLY="y"
+        else
+            echo
+            read -r -p "[gamescope-nvidia] GitHub CLI (gh) is not installed. Install it now? [y/N]: " INSTALL_GH_REPLY
+        fi
 
         case "$INSTALL_GH_REPLY" in
             y|Y|yes|YES|Yes)
@@ -121,7 +131,11 @@ if [[ "$AUTO_UPLOAD" == "1" ]]; then
     echo "[gamescope-nvidia] Target repository: ${GS_REPO}"
     echo
 
-    read -r -p "[gamescope-nvidia] Continue with release upload? [y/N]: " UPLOAD_REPLY
+    if [[ "$YES" == "1" ]]; then
+        UPLOAD_REPLY="y"
+    else
+        read -r -p "[gamescope-nvidia] Continue with release upload? [y/N]: " UPLOAD_REPLY
+    fi
 
     case "$UPLOAD_REPLY" in
         y|Y|yes|YES|Yes)
