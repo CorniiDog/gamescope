@@ -59,10 +59,38 @@ need_cmd unzip
 require_steamos
 
 if [[ "$AUTO_UPLOAD" == "1" ]]; then
-    need_cmd gh
+    command -v gh >/dev/null 2>&1 ||
+        die "GitHub CLI (gh) is required for --auto-upload."
 
-    gh auth status >/dev/null 2>&1 ||
-        die "GitHub CLI is not authenticated. Run: gh auth login"
+    if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+        log "GitHub authentication is required for --auto-upload."
+        echo
+        echo "[gamescope-nvidia] Starting GitHub browser/device authentication..."
+        echo
+
+        gh auth login             --hostname github.com             --git-protocol https             --web
+
+        gh auth status --hostname github.com >/dev/null 2>&1 ||
+            die "GitHub authentication was not completed."
+    fi
+
+    GH_USERNAME="$(gh api user --jq ".login" 2>/dev/null)" ||
+        die "Could not determine the authenticated GitHub account."
+
+    echo
+    echo "[gamescope-nvidia] Authenticated GitHub account: ${GH_USERNAME}"
+    echo "[gamescope-nvidia] Target repository: ${GS_REPO}"
+    echo
+
+    read -r -p "[gamescope-nvidia] Continue with release upload? [y/N]: " UPLOAD_REPLY
+
+    case "$UPLOAD_REPLY" in
+        y|Y|yes|YES|Yes)
+            ;;
+        *)
+            die "Upload cancelled."
+            ;;
+    esac
 
     [[ -z "$(git -C "$PROJECT_ROOT" status --porcelain)" ]] ||
         die "Git working tree is not clean. Commit changes before --auto-upload."
