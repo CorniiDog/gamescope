@@ -25,6 +25,11 @@ done
 CURRENT_DIR="${GS_PREFIX}/current"
 CURRENT_BIN="${CURRENT_DIR}/gamescope"
 MAINTENANCE_DIR="${GS_PREFIX}/bin"
+LIB_DIR="${GS_PREFIX}/lib"
+SOURCE_RUNTIME_DIR=""
+if [[ "$(basename "$(dirname "$SOURCE_BIN")")" == "src" ]]; then
+    SOURCE_RUNTIME_DIR="$(dirname "$(dirname "$SOURCE_BIN")")/runtime"
+fi
 
 require_steamos
 require_nvidia
@@ -36,7 +41,11 @@ verify_system_gamescope
 [[ -x "$SOURCE_BIN" ]] ||
     die "Built Gamescope binary not found: $SOURCE_BIN"
 
-MISSING_LIBS="$(ldd "$SOURCE_BIN" 2>&1 | grep "not found" || true)"
+if [[ -d "$SOURCE_RUNTIME_DIR" ]]; then
+    MISSING_LIBS="$(LD_LIBRARY_PATH="$SOURCE_RUNTIME_DIR" ldd "$SOURCE_BIN" 2>&1 | grep "not found" || true)"
+else
+    MISSING_LIBS="$(ldd "$SOURCE_BIN" 2>&1 | grep "not found" || true)"
+fi
 
 if [[ -n "$MISSING_LIBS" ]]; then
     printf "%s\n" "$MISSING_LIBS" >&2
@@ -60,6 +69,7 @@ sudo mkdir -p \
     "$GS_STOCK_DIR" \
     "$GS_STATE_DIR" \
     "$CURRENT_DIR" \
+    "$LIB_DIR" \
     "$MAINTENANCE_DIR/lib"
 
 #
@@ -118,6 +128,21 @@ fi
 #
 # Cache the patched binary outside SteamOS-managed paths.
 #
+if [[ -d "$SOURCE_RUNTIME_DIR" ]]; then
+    log "Installing bundled runtime libraries..."
+
+    for runtime_lib in "$SOURCE_RUNTIME_DIR"/*; do
+        [[ -f "$runtime_lib" ]] || continue
+
+        sudo install \
+            -o root \
+            -g root \
+            -m 0755 \
+            "$runtime_lib" \
+            "$LIB_DIR/$(basename "$runtime_lib")"
+    done
+fi
+
 log "Caching patched Gamescope..."
 
 sudo install \

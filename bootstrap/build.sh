@@ -86,7 +86,8 @@ podman run \
             xorg-x11-server-Xwayland \
             xorg-x11-server-Xwayland-devel \
             edid-decode \
-            google-benchmark-devel
+            google-benchmark-devel \
+            patchelf
 
         if [[ -d "'"${GS_BUILD_DIR_NAME}"'/meson-private" ]]; then
             meson setup \
@@ -103,6 +104,16 @@ podman run \
 
         ninja \
             -C "'"${GS_BUILD_DIR_NAME}"'"
+
+        mkdir -p "'"${GS_BUILD_DIR_NAME}"'/runtime"
+
+        cp -L \
+            /usr/lib64/libdisplay-info.so.2 \
+            "'"${GS_BUILD_DIR_NAME}"'/runtime/libdisplay-info.so.2"
+
+        patchelf \
+            --set-rpath /opt/gamescope-nvidia/lib \
+            "'"${GS_BUILD_DIR_NAME}"'/src/gamescope"
     '
 
 [[ -x "$OUTPUT_BIN" ]] ||
