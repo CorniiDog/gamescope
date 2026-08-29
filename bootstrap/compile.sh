@@ -101,6 +101,12 @@ compgen -G "${RUNTIME_DIR}/*" >/dev/null ||
 #
 # Repository provenance.
 #
+if [[ "$(git -C "$PROJECT_ROOT" rev-parse --is-shallow-repository)" == "true" ]]; then
+    log "Fetching repository history for provenance..."
+
+    git -C "$PROJECT_ROOT" fetch         --quiet         --unshallow         origin
+fi
+
 NVIDIA_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
 NVIDIA_BRANCH="$(git -C "$PROJECT_ROOT" branch --show-current || true)"
 NVIDIA_BRANCH="${NVIDIA_BRANCH:-detached}"
