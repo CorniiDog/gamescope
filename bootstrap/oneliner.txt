@@ -43,6 +43,5 @@ chmod +x \
     "${PROJECT_DIR}/bootstrap/install.sh" \
     "${PROJECT_DIR}/bootstrap/uninstall.sh"
 
-exec \
     "${PROJECT_DIR}/bootstrap/setup.sh" \
     "$@"

@@ -57,7 +57,8 @@ if [[ "$FORCE_SOURCE" == "0" ]]; then
 
         ok "Compatible precompiled release found."
 
-        exec "${SCRIPT_DIR}/install.sh" --binary "$BIN"
+        "${SCRIPT_DIR}/install.sh" --binary "$BIN"
+        exit 0
     fi
 
     warn "No compatible precompiled release found."
@@ -67,5 +68,5 @@ log "Building from source..."
 
 "${SCRIPT_DIR}/build.sh"
 
-exec "${SCRIPT_DIR}/install.sh" \
+"${SCRIPT_DIR}/install.sh" \
     --binary "${PROJECT_ROOT}/${GS_BUILD_DIR_NAME}/src/gamescope"
