@@ -65,15 +65,65 @@ To compile a SteamOS-compatible release package from a local clone:
 ./bootstrap/compile.sh
 ```
 
-Build artifacts are placed in your home directory by default.
+By default, the compiled release is placed in your home directory as a single portable bundle:
 
-Use `-o` or `--output` to choose another directory:
+```text
+~/gamescope-steamos-<SteamOS version>-x86_64.zip
+```
+
+For example, on SteamOS 3.8.16:
+
+```text
+~/gamescope-steamos-3.8.16-x86_64.zip
+```
+
+The bundle contains:
+
+```text
+gamescope-steamos-3.8.16-x86_64.tar.gz
+gamescope-steamos-3.8.16-x86_64.tar.gz.sha256
+gamescope-steamos-3.8.16-x86_64.build-info.txt
+```
+
+The build information records release provenance such as the SteamOS version, gamescope-nvidia commit, Valve upstream base commit, build container, and other build details.
+
+Use `-o` or `--output` to choose another output directory:
 
 ```bash
 ./bootstrap/compile.sh -o ~/releases
 ```
 
-The generated release artifacts include the Gamescope binary, required runtime libraries, SHA256 checksum, and build/provenance information including the SteamOS version, gamescope-nvidia commit, Valve upstream base commit, and build environment.
+If a valid bundle for the current gamescope-nvidia revision already exists in the output directory, it will be reused instead of compiling again.
+
+To ignore an existing matching bundle and rebuild anyway:
+
+```bash
+./bootstrap/compile.sh --force-rebuild
+```
+
+### Online compilation
+
+You can download the latest repository revision and compile it without manually cloning the repository:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/compile_online.sh?x=$(date +%s)")
+```
+
+`compile_online.sh` accepts the same options as `compile.sh`.
+
+For example:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/compile_online.sh?x=$(date +%s)") -o ~/releases
+```
+
+Or force a fresh build:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/compile_online.sh?x=$(date +%s)") -o ~/releases --force-rebuild
+```
+
+### Uploading a release
 
 Maintainers can automatically create or update the matching GitHub release with:
 
@@ -81,35 +131,39 @@ Maintainers can automatically create or update the matching GitHub release with:
 ./bootstrap/compile.sh --auto-upload
 ```
 
-You can also download the latest repository state and compile directly without manually cloning it:
-
-```bash
-bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/compile_online.sh?x=$(date +%s)")
-```
-
-`compile_online.sh` accepts the same options as `compile.sh`:
+Or with the online compiler:
 
 ```bash
 bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/compile_online.sh?x=$(date +%s)") -o ~/releases --auto-upload
 ```
 
+If an existing local bundle matches the current repository revision, it will be reused and uploaded without compiling again.
+
 `--auto-upload` requires the GitHub CLI (`gh`) to be installed and authenticated.
 
-Build artifacts are placed in your home directory by default:
+If necessary, authenticate with:
 
-~/gamescope-steamos-<SteamOS version>-x86_64.tar.gz
-~/gamescope-steamos-<SteamOS version>-x86_64.tar.gz.sha256
-~/gamescope-steamos-<SteamOS version>-x86_64.build-info.txt
+```bash
+gh auth login
+```
 
-For example, on SteamOS 3.8.16:
+### Installing a local build
 
-~/gamescope-steamos-3.8.16-x86_64.tar.gz
-~/gamescope-steamos-3.8.16-x86_64.tar.gz.sha256
-~/gamescope-steamos-3.8.16-x86_64.build-info.txt
+A locally compiled bundle can be installed directly without uploading it to GitHub:
 
-Use -o or --output to choose another directory:
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/online_install.sh?x=$(date +%s)") --local ~/gamescope-steamos-3.8.16-x86_64.zip
+```
 
-./bootstrap/compile.sh -o ~/releases
+`--local` also accepts a release `.tar.gz` with its matching `.sha256` file, or a directory containing the matching release files.
+
+For example:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/CorniiDog/gamescope-nvidia/master/bootstrap/online_install.sh?x=$(date +%s)") --local ~/releases
+```
+
+This allows a build to be compiled and tested locally first, then uploaded later without requiring another compilation.
 
 ---
 

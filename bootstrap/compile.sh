@@ -53,6 +53,8 @@ need_cmd git
 need_cmd podman
 need_cmd tar
 need_cmd sha256sum
+need_cmd zip
+need_cmd unzip
 
 require_steamos
 
@@ -77,211 +79,250 @@ BUILD_DIR="${PROJECT_ROOT}/${GS_BUILD_DIR_NAME}"
 BINARY="${BUILD_DIR}/src/gamescope"
 RUNTIME_DIR="${BUILD_DIR}/runtime"
 
-ARCHIVE="${OUTPUT_DIR}/${ASSET_NAME}"
-CHECKSUM="${ARCHIVE}.sha256"
-BUILD_INFO="${OUTPUT_DIR}/${ASSET_NAME%.tar.gz}.build-info.txt"
+BUNDLE_NAME="${ASSET_NAME%.tar.gz}.zip"
+BUNDLE="${OUTPUT_DIR}/${BUNDLE_NAME}"
 
 NVIDIA_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
 CACHE_HIT=0
 
+WORK_DIR="$(mktemp -d)"
+RELEASE_FILES_DIR="${WORK_DIR}/release-files"
+PACKAGE_DIR="${WORK_DIR}/package"
+
+ARCHIVE="${RELEASE_FILES_DIR}/${ASSET_NAME}"
+CHECKSUM="${ARCHIVE}.sha256"
+BUILD_INFO="${RELEASE_FILES_DIR}/${ASSET_NAME%.tar.gz}.build-info.txt"
+
 metadata_value()
 {
-    local key="$1"
-    grep -m1 "^${key}=" "$BUILD_INFO" 2>/dev/null | cut -d= -f2-
+    local file="$1"
+    local key="$2"
+
+    grep -m1 "^${key}=" "$file" 2>/dev/null | cut -d= -f2-
 }
 
-if [[ "$FORCE_REBUILD" == "0" &&
-      -f "$ARCHIVE" &&
-      -f "$CHECKSUM" &&
-      -f "$BUILD_INFO" ]]; then
+if [[ "$FORCE_REBUILD" == "0" && -f "$BUNDLE" ]]; then
+    mkdir -p "$RELEASE_FILES_DIR"
 
-    CACHED_COMMIT="$(metadata_value nvidia_fork_commit)"
-    CACHED_STEAMOS="$(metadata_value steamos_version)"
-    CACHED_CONTAINER="$(metadata_value container_image)"
-    CACHED_SHA="$(awk '{print $1}' "$CHECKSUM" | head -n1)"
+    if unzip -q "$BUNDLE" -d "$RELEASE_FILES_DIR"; then
+        BUNDLE_ARCHIVE="${RELEASE_FILES_DIR}/${ASSET_NAME}"
+        BUNDLE_CHECKSUM="${BUNDLE_ARCHIVE}.sha256"
+        BUNDLE_INFO="${RELEASE_FILES_DIR}/${ASSET_NAME%.tar.gz}.build-info.txt"
 
-    if [[ "$CACHED_SHA" =~ ^[0-9a-fA-F]{64}$ &&
-          "$CACHED_COMMIT" == "$NVIDIA_COMMIT" &&
-          "$CACHED_STEAMOS" == "$STEAMOS_VERSION" &&
-          "$CACHED_CONTAINER" == "$GS_CONTAINER_IMAGE" &&
-          "${CACHED_SHA,,}" == "$(sha256_file "$ARCHIVE")" ]]; then
+        if [[ -f "$BUNDLE_ARCHIVE" &&
+              -f "$BUNDLE_CHECKSUM" &&
+              -f "$BUNDLE_INFO" ]]; then
 
-        CACHE_HIT=1
+            CACHED_COMMIT="$(metadata_value "$BUNDLE_INFO" nvidia_fork_commit)"
+            CACHED_STEAMOS="$(metadata_value "$BUNDLE_INFO" steamos_version)"
+            CACHED_CONTAINER="$(metadata_value "$BUNDLE_INFO" container_image)"
+            CACHED_SHA="$(awk '{print $1}' "$BUNDLE_CHECKSUM" | head -n1)"
 
-        VALVE_BASE_COMMIT="$(metadata_value valve_base_commit)"
-        VALVE_MASTER_COMMIT="$(metadata_value valve_master_at_build)"
+            if [[ "$CACHED_SHA" =~ ^[0-9a-fA-F]{64}$ &&
+                  "$CACHED_COMMIT" == "$NVIDIA_COMMIT" &&
+                  "$CACHED_STEAMOS" == "$STEAMOS_VERSION" &&
+                  "$CACHED_CONTAINER" == "$GS_CONTAINER_IMAGE" &&
+                  "${CACHED_SHA,,}" == "$(sha256_file "$BUNDLE_ARCHIVE")" ]]; then
 
-        log "Existing build artifacts match the current repository revision."
-        log "Skipping compilation."
+                CACHE_HIT=1
+                VALVE_BASE_COMMIT="$(metadata_value "$BUNDLE_INFO" valve_base_commit)"
+                VALVE_MASTER_COMMIT="$(metadata_value "$BUNDLE_INFO" valve_master_at_build)"
+
+                ARCHIVE="$BUNDLE_ARCHIVE"
+                CHECKSUM="$BUNDLE_CHECKSUM"
+                BUILD_INFO="$BUNDLE_INFO"
+
+                log "Existing build bundle matches the current repository revision."
+                log "Skipping compilation."
+            fi
+        fi
+    fi
+
+    if [[ "$CACHE_HIT" == "0" ]]; then
+        rm -rf "$RELEASE_FILES_DIR"
+        mkdir -p "$RELEASE_FILES_DIR"
     fi
 fi
 
-PACKAGE_DIR="$(mktemp -d)"
-
 cleanup()
 {
-    rm -rf "$PACKAGE_DIR"
+    rm -rf "$WORK_DIR"
 }
 
 trap cleanup EXIT
 
-log "Building gamescope-nvidia for SteamOS ${STEAMOS_VERSION}..."
-log "Output directory: ${OUTPUT_DIR}"
+if [[ "$CACHE_HIT" == "0" ]]; then
+    log "Building gamescope-nvidia for SteamOS ${STEAMOS_VERSION}..."
+    log "Output directory: ${OUTPUT_DIR}"
 
-"${SCRIPT_DIR}/build.sh"
+    "${SCRIPT_DIR}/build.sh"
 
-[[ -x "$BINARY" ]] ||
-    die "Built Gamescope binary not found: ${BINARY}"
+    [[ -x "$BINARY" ]] ||
+        die "Built Gamescope binary not found: ${BINARY}"
 
-[[ -d "$RUNTIME_DIR" ]] ||
-    die "Built runtime directory not found: ${RUNTIME_DIR}"
+    [[ -d "$RUNTIME_DIR" ]] ||
+        die "Built runtime directory not found: ${RUNTIME_DIR}"
 
-compgen -G "${RUNTIME_DIR}/*" >/dev/null ||
-    die "Built runtime directory is empty."
+    compgen -G "${RUNTIME_DIR}/*" >/dev/null ||
+        die "Built runtime directory is empty."
 
-#
-# Repository provenance.
-#
-if [[ "$(git -C "$PROJECT_ROOT" rev-parse --is-shallow-repository)" == "true" ]]; then
-    log "Fetching repository history for provenance..."
+    #
+    # Repository provenance.
+    #
+    if [[ "$(git -C "$PROJECT_ROOT" rev-parse --is-shallow-repository)" == "true" ]]; then
+        log "Fetching repository history for provenance..."
 
-    git -C "$PROJECT_ROOT" fetch         --quiet         --unshallow         origin
+        git -C "$PROJECT_ROOT" fetch         --quiet         --unshallow         origin
+    fi
+
+    NVIDIA_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
+    NVIDIA_BRANCH="$(git -C "$PROJECT_ROOT" branch --show-current || true)"
+    NVIDIA_BRANCH="${NVIDIA_BRANCH:-detached}"
+
+    VALVE_MASTER_COMMIT="$(
+        git ls-remote \
+            https://github.com/ValveSoftware/gamescope.git \
+            refs/heads/master |
+            awk '{print $1}'
+    )"
+
+    [[ "$VALVE_MASTER_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] ||
+        die "Could not determine current Valve Gamescope master commit."
+
+    #
+    # Fetch Valve master into a temporary local ref so we can determine
+    # the actual upstream commit this fork descends from.
+    #
+    VALVE_TEMP_REF="refs/gamescope-nvidia-build/valve-master"
+
+    git -C "$PROJECT_ROOT" fetch \
+        --quiet \
+        --no-tags \
+        https://github.com/ValveSoftware/gamescope.git \
+        "master:${VALVE_TEMP_REF}"
+
+    VALVE_BASE_COMMIT="$(
+        git -C "$PROJECT_ROOT" merge-base HEAD "$VALVE_TEMP_REF"
+    )"
+
+    git -C "$PROJECT_ROOT" update-ref -d "$VALVE_TEMP_REF"
+
+    [[ "$VALVE_BASE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] ||
+        die "Could not determine Valve upstream base commit."
+
+    #
+    # Gather versions from the exact build container.
+    #
+    CONTAINER_INFO="$(
+        podman run --rm \
+            "$GS_CONTAINER_IMAGE" \
+            bash -c '
+                source /etc/os-release
+                printf "fedora_version=%s\n" "${VERSION_ID:-unknown}"
+                printf "gcc_version=%s\n" "$(gcc --version 2>/dev/null | head -n1 || printf unavailable)"
+                printf "glibc_version=%s\n" "$(ldd --version 2>/dev/null | head -n1 || printf unavailable)"
+            '
+    )"
+
+    GAMESCOPE_VERSION="$(
+        LD_LIBRARY_PATH="$RUNTIME_DIR" "$BINARY" --version 2>&1 |
+            head -n1
+    )"
+
+    BUILD_TIMESTAMP="$(date --iso-8601=seconds)"
+
+    #
+    # Build metadata.
+    #
+    {
+        printf 'gamescope-nvidia build information\n'
+        printf '\n'
+        printf 'built_at=%s\n' "$BUILD_TIMESTAMP"
+        printf 'steamos_version=%s\n' "$STEAMOS_VERSION"
+        printf 'release_tag=%s\n' "$RELEASE_TAG"
+        printf 'release_asset=%s\n' "$ASSET_NAME"
+        printf '\n'
+        printf 'repository=%s\n' "$GS_REPO"
+        printf 'branch=%s\n' "$NVIDIA_BRANCH"
+        printf 'nvidia_fork_commit=%s\n' "$NVIDIA_COMMIT"
+        printf 'valve_base_commit=%s\n' "$VALVE_BASE_COMMIT"
+        printf 'valve_master_at_build=%s\n' "$VALVE_MASTER_COMMIT"
+        printf '\n'
+        printf 'container_image=%s\n' "$GS_CONTAINER_IMAGE"
+        printf '%s\n' "$CONTAINER_INFO"
+        printf 'gamescope_version=%s\n' "$GAMESCOPE_VERSION"
+        printf '\n'
+        printf 'runtime_libraries:\n'
+
+        for runtime_lib in "$RUNTIME_DIR"/*; do
+            [[ -f "$runtime_lib" ]] || continue
+
+            printf '  %s  %s\n' \
+                "$(sha256_file "$runtime_lib")" \
+                "$(basename "$runtime_lib")"
+        done
+    } > "$BUILD_INFO"
+
+    #
+    # Package exactly what the online installer needs, plus provenance.
+    #
+    mkdir -p \
+        "${PACKAGE_DIR}/src" \
+        "${PACKAGE_DIR}/runtime"
+
+    install -m 0755 \
+        "$BINARY" \
+        "${PACKAGE_DIR}/src/gamescope"
+
+    cp -a \
+        "${RUNTIME_DIR}/." \
+        "${PACKAGE_DIR}/runtime/"
+
+    cp \
+        "$BUILD_INFO" \
+        "${PACKAGE_DIR}/BUILD-INFO.txt"
+
+    mkdir -p "$RELEASE_FILES_DIR"
+
+    rm -f "$ARCHIVE" "$CHECKSUM"
+
+    tar -C "$PACKAGE_DIR" \
+        -czf "$ARCHIVE" \
+        src \
+        runtime \
+        BUILD-INFO.txt
+
+    (
+        cd "$RELEASE_FILES_DIR"
+        sha256sum "$ASSET_NAME" > "$(basename "$CHECKSUM")"
+    )
+
+    EXPECTED="$(awk '{print $1}' "$CHECKSUM")"
+    ACTUAL="$(sha256_file "$ARCHIVE")"
+
+    [[ "$EXPECTED" == "$ACTUAL" ]] ||
+        die "Generated release archive failed checksum verification."
+
+    #
+    # Add the final archive checksum to the external build-info file.
+    #
+    printf 'archive_sha256=%s\n' "$ACTUAL" >> "$BUILD_INFO"
+
+    rm -f "$BUNDLE"
+
+    (
+        cd "$RELEASE_FILES_DIR"
+        zip -q "$BUNDLE" \
+            "$ASSET_NAME" \
+            "${ASSET_NAME}.sha256" \
+            "${ASSET_NAME%.tar.gz}.build-info.txt"
+    )
+
+    ok "Build artifacts created."
 fi
 
-NVIDIA_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
-NVIDIA_BRANCH="$(git -C "$PROJECT_ROOT" branch --show-current || true)"
-NVIDIA_BRANCH="${NVIDIA_BRANCH:-detached}"
-
-VALVE_MASTER_COMMIT="$(
-    git ls-remote \
-        https://github.com/ValveSoftware/gamescope.git \
-        refs/heads/master |
-        awk '{print $1}'
-)"
-
-[[ "$VALVE_MASTER_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] ||
-    die "Could not determine current Valve Gamescope master commit."
-
-#
-# Fetch Valve master into a temporary local ref so we can determine
-# the actual upstream commit this fork descends from.
-#
-VALVE_TEMP_REF="refs/gamescope-nvidia-build/valve-master"
-
-git -C "$PROJECT_ROOT" fetch \
-    --quiet \
-    --no-tags \
-    https://github.com/ValveSoftware/gamescope.git \
-    "master:${VALVE_TEMP_REF}"
-
-VALVE_BASE_COMMIT="$(
-    git -C "$PROJECT_ROOT" merge-base HEAD "$VALVE_TEMP_REF"
-)"
-
-git -C "$PROJECT_ROOT" update-ref -d "$VALVE_TEMP_REF"
-
-[[ "$VALVE_BASE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] ||
-    die "Could not determine Valve upstream base commit."
-
-#
-# Gather versions from the exact build container.
-#
-CONTAINER_INFO="$(
-    podman run --rm \
-        "$GS_CONTAINER_IMAGE" \
-        bash -c '
-            source /etc/os-release
-            printf "fedora_version=%s\n" "${VERSION_ID:-unknown}"
-            printf "gcc_version=%s\n" "$(gcc --version 2>/dev/null | head -n1 || printf unavailable)"
-            printf "glibc_version=%s\n" "$(ldd --version 2>/dev/null | head -n1 || printf unavailable)"
-        '
-)"
-
-GAMESCOPE_VERSION="$(
-    LD_LIBRARY_PATH="$RUNTIME_DIR" "$BINARY" --version 2>&1 |
-        head -n1
-)"
-
-BUILD_TIMESTAMP="$(date --iso-8601=seconds)"
-
-#
-# Build metadata.
-#
-{
-    printf 'gamescope-nvidia build information\n'
-    printf '\n'
-    printf 'built_at=%s\n' "$BUILD_TIMESTAMP"
-    printf 'steamos_version=%s\n' "$STEAMOS_VERSION"
-    printf 'release_tag=%s\n' "$RELEASE_TAG"
-    printf 'release_asset=%s\n' "$ASSET_NAME"
-    printf '\n'
-    printf 'repository=%s\n' "$GS_REPO"
-    printf 'branch=%s\n' "$NVIDIA_BRANCH"
-    printf 'nvidia_fork_commit=%s\n' "$NVIDIA_COMMIT"
-    printf 'valve_base_commit=%s\n' "$VALVE_BASE_COMMIT"
-    printf 'valve_master_at_build=%s\n' "$VALVE_MASTER_COMMIT"
-    printf '\n'
-    printf 'container_image=%s\n' "$GS_CONTAINER_IMAGE"
-    printf '%s\n' "$CONTAINER_INFO"
-    printf 'gamescope_version=%s\n' "$GAMESCOPE_VERSION"
-    printf '\n'
-    printf 'runtime_libraries:\n'
-
-    for runtime_lib in "$RUNTIME_DIR"/*; do
-        [[ -f "$runtime_lib" ]] || continue
-
-        printf '  %s  %s\n' \
-            "$(sha256_file "$runtime_lib")" \
-            "$(basename "$runtime_lib")"
-    done
-} > "$BUILD_INFO"
-
-#
-# Package exactly what the online installer needs, plus provenance.
-#
-mkdir -p \
-    "${PACKAGE_DIR}/src" \
-    "${PACKAGE_DIR}/runtime"
-
-install -m 0755 \
-    "$BINARY" \
-    "${PACKAGE_DIR}/src/gamescope"
-
-cp -a \
-    "${RUNTIME_DIR}/." \
-    "${PACKAGE_DIR}/runtime/"
-
-cp \
-    "$BUILD_INFO" \
-    "${PACKAGE_DIR}/BUILD-INFO.txt"
-
-rm -f "$ARCHIVE" "$CHECKSUM"
-
-tar -C "$PACKAGE_DIR" \
-    -czf "$ARCHIVE" \
-    src \
-    runtime \
-    BUILD-INFO.txt
-
-(
-    cd "$OUTPUT_DIR"
-    sha256sum "$ASSET_NAME" > "$(basename "$CHECKSUM")"
-)
-
-EXPECTED="$(awk '{print $1}' "$CHECKSUM")"
-ACTUAL="$(sha256_file "$ARCHIVE")"
-
-[[ "$EXPECTED" == "$ACTUAL" ]] ||
-    die "Generated release archive failed checksum verification."
-
-#
-# Add the final archive checksum to the external build-info file.
-#
-printf 'archive_sha256=%s\n' "$ACTUAL" >> "$BUILD_INFO"
-
-ok "Build artifacts created."
-
 printf '\n'
+printf 'Bundle:     %s\n' "$BUNDLE"
 printf 'Archive:    %s\n' "$ARCHIVE"
 printf 'Checksum:   %s\n' "$CHECKSUM"
 printf 'Build info: %s\n' "$BUILD_INFO"
