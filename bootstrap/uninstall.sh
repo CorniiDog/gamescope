@@ -36,9 +36,15 @@ trap cleanup EXIT
 
 STOCK_SHA="$(sha256_file "$GS_STOCK_BIN")"
 
+RESTORE_TMP="${GS_SYSTEM_BIN}.gamescope-nvidia-restore.$$"
+
 sudo cp \
     --preserve=all \
     "$GS_STOCK_BIN" \
+    "$RESTORE_TMP"
+
+sudo mv -f \
+    "$RESTORE_TMP" \
     "$GS_SYSTEM_BIN"
 
 RESTORED_SHA="$(sha256_file "$GS_SYSTEM_BIN")"
